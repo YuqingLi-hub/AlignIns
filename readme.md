@@ -1,6 +1,7 @@
 ## Detecting Backdoor Attacks in Federated Learning via Direction Alignment Inspection
 
-We provide the code of proposed AlignIns.
+This is the official implementation for CVPR'25 paper "Detecting Backdoor Attacks in Federated Learning via Direction Alignment Inspection".
+
 
 ## Usage
 
