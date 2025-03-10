@@ -5,7 +5,6 @@ import copy
 import numpy as np
 from agent import Agent
 from agent_sparse import Agent as Agent_s
-# from options import args_parser
 from aggregation import Aggregation
 import torch
 import random
@@ -13,9 +12,7 @@ from torch.utils.data import DataLoader
 import torch.nn as nn
 from torch.nn.utils import parameters_to_vector
 import logging
-import time
 import argparse
-from shutil import copyfile
 import os
 import warnings
 warnings.filterwarnings("ignore")
@@ -51,15 +48,10 @@ if __name__ == "__main__":
     parser.add_argument('--local_ep', type=int, default=2,
                         help="number of local epochs:E")
     
-    parser.add_argument('--attacker_local_ep', type=int, default=2,
-                        help="number of local epochs:E")
-    
     parser.add_argument('--bs', type=int, default=64,
                         help="local batch size: B")
     
     parser.add_argument('--client_lr', type=float, default=0.1,
-                        help='clients learning rate')
-    parser.add_argument('--malicious_client_lr', type=float, default=0.1,
                         help='clients learning rate')
     parser.add_argument('--server_lr', type=float, default=1,
                         help='servers learning rate for signSGD')
@@ -91,7 +83,7 @@ if __name__ == "__main__":
     parser.add_argument('--non_iid', action='store_true', default=False)
     parser.add_argument('--debug', action='store_true', default=False)
     parser.add_argument('--alpha',type=float, default=0.5)
-    parser.add_argument('--attack',type=str, default="badnet", choices=['badnet', 'DBA', 'neurotoxin', 'scaling', 'pgd', 'lie', 'lie_byz'])
+    parser.add_argument('--attack',type=str, default="badnet", choices=['badnet', 'DBA', 'neurotoxin', 'pgd'])
     parser.add_argument('--aggr', type=str, default='avg', choices=['avg', 'alignins', 'rlr', 'mkrum', 'mmetric', 'lockdown', 'foolsgold', 'rfa'],
                         help="aggregation function to aggregate agents' local weights")
     parser.add_argument('--lr_decay',type=float, default=0.99)
@@ -110,11 +102,6 @@ if __name__ == "__main__":
 
     args = parser.parse_args()
 
-    # args.attacker_local_ep = 2 if not args.non_iid else 2
-
-    if args.data != 'cifar10':
-        args.rounds = 100
-
     if args.clean:
         args.num_corrupt = 0
         args.exp_name_extra = 'clean'
@@ -126,83 +113,57 @@ if __name__ == "__main__":
     if args.aggr == 'lockdown' and args.attack == 'neurotoxin':
         args.theta_ld = 15
         
-    # if args.non_iid_par:
-    #     args.exp_name_extra = '_labelpar'
-    # args.theta = int(args.num_agents * args.agent_frac)
-    
-    logFormatter = logging.Formatter("%(asctime)s [%(threadName)-12.12s] [%(levelname)-5.5s]  %(message)s")
-    rootLogger = logging.getLogger()
-    rootLogger.setLevel(logging.DEBUG)
-    if not args.debug:
-        logPath = "logs"
-        time_str = time.strftime("%Y-%m-%d-%H-%M")
-
-        if args.non_iid:
-            iid_str = 'noniid(%.1f)' % args.alpha
-        else:
-            iid_str = 'iid'
-
-        args.exp_name = iid_str + '_pr(%.1f)' % args.poison_frac
         
-        if args.exp_name_extra != '':
-            args.exp_name += '_%s' % args.exp_name_extra
+    per_data_dict = {'rounds':{'fmnist': 50, 
+                  'cifar10': 100,
+                  'cifar100': 100,
+                  'tinyimagenet': 50},
+                  
+                  'num_target':{'fmnist': 10, 
+                  'cifar10': 10,
+                  'cifar100': 100,
+                  'tinyimagenet': 200}
+                  }
+    
+    args.rounds = per_data_dict['rounds'][args.data]
+    args.num_target = per_data_dict['num_target'][args.data]
 
-        fileName = "%s_%s" % (time_str, args.exp_name)
 
-        dir_path = '%s/%s/attack_%s_ar_%.2f/defense_%s/%s/' % (logPath, args.data, args.attack, args.num_corrupt / args.num_agents, args.aggr, fileName)
-        file_path = dir_path + 'backup_file/'
-
-        if not os.path.exists(dir_path):
-            os.makedirs(dir_path)
-
-        if not os.path.exists(file_path):
-            os.makedirs(file_path)
-
-        backup_file = ['aggregation.py', 'federated.py', 'agent.py']
-
-        for file in backup_file:
-            copyfile('./%s' % file, file_path + file)
-
-        fileHandler = logging.FileHandler("{0}/{1}.log".format(dir_path, fileName))
-        fileHandler.setFormatter(logFormatter)
-        rootLogger.addHandler(fileHandler)
-        console_handler = logging.StreamHandler()
-        console_handler.setLevel(logging.DEBUG)  # 设置日志级别
-        console_handler.setFormatter(logFormatter)
-        rootLogger.addHandler(console_handler)
-    logging.info(args)
-
-    cum_poison_acc_mean = 0
+    args.log_dir = utils.setup_logging(args)
 
     train_dataset, val_dataset = utils.get_datasets(args.data)
     backdoor_train_dataset = None
 
-    if args.data == "cifar100":
-        num_target = 100
-    else:
-        num_target = 10
 
     val_loader = DataLoader(val_dataset, batch_size=args.bs, shuffle=False, num_workers=args.num_workers,
                             pin_memory=False)
     if args.non_iid:
         user_groups = utils.distribute_data_dirichlet(train_dataset, args)
     else:
-        user_groups = utils.distribute_data(train_dataset, args, n_classes=num_target)
+        user_groups = utils.distribute_data(train_dataset, args, n_classes=args.num_target)
         # print(user_groups)
 
     # logging.info(idxs)
     idxs = (val_dataset.targets != args.target_class).nonzero().flatten().tolist()
 
     # poison the validation dataset
-    poisoned_val_set = utils.DatasetSplit(copy.deepcopy(val_dataset), idxs)
-    utils.poison_dataset(poisoned_val_set.dataset, args, idxs, poison_all=True)
+        # poison the validation dataset
+    if args.data != "tinyimagenet":
+        # poison the validation dataset
+        poisoned_val_set = utils.DatasetSplit(copy.deepcopy(val_dataset), idxs)
+        utils.poison_dataset(poisoned_val_set.dataset, args, idxs, poison_all=True)
+    else:
+        poisoned_val_set = utils.DatasetSplit(copy.deepcopy(val_dataset), idxs, runtime_poison=True, args=args)
     
 
     poisoned_val_loader = DataLoader(poisoned_val_set, batch_size=args.bs, shuffle=False, num_workers=args.num_workers,
                                     pin_memory=False)
-    idxs = (val_dataset.targets != args.target_class).nonzero().flatten().tolist()
-    poisoned_val_set_only_x = utils.DatasetSplit(copy.deepcopy(val_dataset), idxs)
-    utils.poison_dataset(poisoned_val_set_only_x.dataset, args, idxs, poison_all=True, modify_label=False)
+    if args.data != "tinyimagenet":
+        idxs = (val_dataset.targets != args.target_class).nonzero().flatten().tolist()
+        poisoned_val_set_only_x = utils.DatasetSplit(copy.deepcopy(val_dataset), idxs)
+        utils.poison_dataset(poisoned_val_set_only_x.dataset, args, idxs, poison_all=True, modify_label=False)
+    else:
+        poisoned_val_set_only_x = utils.DatasetSplit(copy.deepcopy(val_dataset), idxs, runtime_poison=True, args=args, modify_label =False)
         
 
 
@@ -239,15 +200,11 @@ if __name__ == "__main__":
 
         logging.info('build client:{} mal:{} data_num:{}'.format(_id, agent.is_malicious, agent.n_data))
 
-        # aggregation server and the loss function
-    # poisoned_val_loader = None
-    aggregator = Aggregation(agent_data_sizes, n_model_params, poisoned_val_loader, args, None)
+
+    aggregator = Aggregation(agent_data_sizes, n_model_params, args)
 
     criterion = nn.CrossEntropyLoss().to(args.device)
-    agent_updates_list = []
-    worker_id_list = []
     agent_updates_dict = {}
-    mask_aggrement = []
 
     best_acc = -1
 
@@ -258,7 +215,7 @@ if __name__ == "__main__":
         agent_updates_dict = {}
         chosen = np.random.choice(args.num_agents, math.floor(args.num_agents * args.agent_frac), replace=False)
         chosen = sorted(chosen)
-        if args.aggr == "lockdown" or args.aggr == "fedimp":
+        if args.aggr == "lockdown":
             old_mask = [copy.deepcopy(agent.mask) for agent in agents]
 
         for agent_id in chosen:
@@ -277,22 +234,22 @@ if __name__ == "__main__":
         # aggregate params obtained by agents and update the global params
 
         updates_dict, neurotoxin_mask = aggregator.aggregate_updates(global_model, agent_updates_dict)
-        worker_id_list.append(agent_id + 1)
+        # worker_id_list.append(agent_id + 1)
 
         # inference in every args.snap rounds
         logging.info("---------Test {} ------------".format(rnd))
         if rnd % args.snap == 0:
             if args.aggr != 'lockdown':
-                val_loss, (val_acc, val_per_class_acc), _ = utils.get_loss_n_accuracy(global_model, criterion, val_loader,
-                                                                                    args, rnd, num_target)
+                val_acc = utils.get_loss_n_accuracy(global_model, criterion, val_loader,
+                                                                                    args, rnd, args.num_target)
 
-                poison_loss, (asr, _), fail_samples = utils.get_loss_n_accuracy(global_model, criterion,
-                                                                                poisoned_val_loader, args, rnd, num_classes=num_target)
+                asr = utils.get_loss_n_accuracy(global_model, criterion,
+                                                                                poisoned_val_loader, args, rnd, num_classes=args.num_target)
                 # cum_poison_acc_mean += asr
 
-                poison_loss, (poison_acc, _), fail_samples = utils.get_loss_n_accuracy(global_model, criterion,
+                poison_acc = utils.get_loss_n_accuracy(global_model, criterion,
                                                                                     poisoned_val_only_x_loader, args,
-                                                                                    rnd, num_target)
+                                                                                    rnd, args.num_target)
             else:
                 test_model = copy.deepcopy(global_model)
 
@@ -304,17 +261,17 @@ if __name__ == "__main__":
                     param.data = torch.where(mask.to(args.device) >= args.theta_ld, param,
                                              torch.zeros_like(param))
                     # logging.info(torch.sum(mask.to(args.device) >= args.theta) / torch.numel(mask))
-                val_loss, (val_acc, val_per_class_acc), _ = utils.get_loss_n_accuracy(test_model, criterion,
+                val_acc = utils.get_loss_n_accuracy(test_model, criterion,
                                                                                       val_loader,
-                                                                                      args, rnd, num_target)
+                                                                                      args, rnd, args.num_target)
                 
-                poison_loss, (asr, _), _ = utils.get_loss_n_accuracy(test_model, criterion,
+                asr = utils.get_loss_n_accuracy(test_model, criterion,
                                                                             poisoned_val_loader,
-                                                                            args, rnd, num_target)
+                                                                            args, rnd, args.num_target)
 
-                poison_loss, (poison_acc, _), fail_samples = utils.get_loss_n_accuracy(test_model, criterion,
+                poison_acc = utils.get_loss_n_accuracy(test_model, criterion,
                                                                                        poisoned_val_only_x_loader, args,
-                                                                                       rnd, num_target)
+                                                                                       rnd, args.num_target)
                 
                 del test_model
             logging.info('Clean ACC:              %.4f' % val_acc)

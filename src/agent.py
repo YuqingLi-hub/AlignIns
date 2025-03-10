@@ -13,32 +13,24 @@ class Agent():
         self.error = 0
         self.hessian_metrix = []
         # get datasets, fedemnist is handled differently as it doesn't come with pytorch
-        if train_dataset is None:
-            self.train_dataset = torch.load(f'../data/Fed_EMNIST/user_trainsets/user_{id}_trainset.pt')
+        if self.args.data != "tinyimagenet":
+            self.train_dataset = utils.DatasetSplit(train_dataset, data_idxs)
 
             # for backdoor attack, agent poisons his local dataset
-            if self.id < args.num_corrupt:
-                utils.poison_dataset(self.train_dataset, args, data_idxs, agent_idx=self.id)
+            if self.id < args.num_corrupt and self.args.attack != 'non' and self.args.data != 'sen140':
 
+                self.clean_backup_dataset = copy.deepcopy(train_dataset)
+                self.data_idxs = data_idxs
+                utils.poison_dataset(train_dataset, args, data_idxs, agent_idx=self.id)
+            elif self.id < args.num_corrupt and self.args.attack != 'non' and self.args.data == 'sen140':
+                self.clean_backup_dataset = copy.deepcopy(train_dataset)
+                self.data_idxs = data_idxs
+                benign_part = data_idxs[:int(len(data_idxs) * (1 - self.args.poison_frac))]
+                malicious_part = data_idxs[int(len(data_idxs) * (1 - self.args.poison_frac)):]
+
+                self.train_dataset = utils.DatasetSplit_new(train_dataset, backdoor_train_dataset, benign_part, malicious_part, data_idxs)
         else:
-            if self.args.data != "tinyimagenet":
-                self.train_dataset = utils.DatasetSplit(train_dataset, data_idxs)
-
-                # for backdoor attack, agent poisons his local dataset
-                if self.id < args.num_corrupt and self.args.attack != 'non' and self.args.data != 'sen140':
-
-                    self.clean_backup_dataset = copy.deepcopy(train_dataset)
-                    self.data_idxs = data_idxs
-                    utils.poison_dataset(train_dataset, args, data_idxs, agent_idx=self.id)
-                elif self.id < args.num_corrupt and self.args.attack != 'non' and self.args.data == 'sen140':
-                    self.clean_backup_dataset = copy.deepcopy(train_dataset)
-                    self.data_idxs = data_idxs
-                    benign_part = data_idxs[:int(len(data_idxs) * (1 - self.args.poison_frac))]
-                    malicious_part = data_idxs[int(len(data_idxs) * (1 - self.args.poison_frac)):]
-
-                    self.train_dataset = utils.DatasetSplit_new(train_dataset, backdoor_train_dataset, benign_part, malicious_part, data_idxs)
-            else:
-                self.train_dataset = utils.DatasetSplit(train_dataset, data_idxs, runtime_poison=True, args=args,
+            self.train_dataset = utils.DatasetSplit(train_dataset, data_idxs, runtime_poison=True, args=args,
                                                         client_id=id)
         # get dataloader
         self.train_loader = DataLoader(self.train_dataset, batch_size=self.args.bs, shuffle=True, \
@@ -61,13 +53,11 @@ class Agent():
         if self.id < self.args.num_corrupt:
             self.check_poison_timing(round)
         global_model.train()
-        current_lr = self.args.client_lr if not self.is_malicious else self.args.malicious_client_lr 
-        optimizer = torch.optim.SGD(global_model.parameters(), lr=current_lr * (self.args.lr_decay) ** round,
+        optimizer = torch.optim.SGD(global_model.parameters(), lr=self.args.client_lr * (self.args.lr_decay) ** round,
                                     weight_decay=self.args.wd, momentum=self.args.momentum)
-        # optimizer = torch.optim.Adam(global_model.parameters(), lr=current_lr * (self.args.lr_decay) ** (round - 1),
-        #                             betas=(0, 0.999), weight_decay=self.args.wd)
+
         regular_loss = 0.0
-        for local_epoch in range(self.args.local_ep if not self.is_malicious else self.args.attacker_local_ep):
+        for local_epoch in range(self.args.local_ep):
             start = time.time()
             old_gradient = {}
             old_gradient_mine = {}

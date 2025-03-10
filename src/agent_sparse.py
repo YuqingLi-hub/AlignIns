@@ -51,8 +51,6 @@ class Agent():
                                        num_workers=self.args.num_workers, pin_memory=False, drop_last=True)
 
 
-
-
     def screen_gradients(self, model):
         model.train()
         # # # train and update
@@ -128,8 +126,7 @@ class Agent():
                 self.mask = self.update_mask(self.mask, self.num_remove, gradient)
         
         global_model.train()
-        current_lr = self.args.client_lr if not self.is_malicious else self.args.malicious_client_lr 
-        optimizer = torch.optim.SGD(global_model.parameters(), lr=current_lr * (self.args.lr_decay) ** round,
+        optimizer = torch.optim.SGD(global_model.parameters(), lr=self.args.client_lr * (self.args.lr_decay) ** round,
                                     weight_decay=self.args.wd)
 
         for local_epoch in range(self.args.local_ep):

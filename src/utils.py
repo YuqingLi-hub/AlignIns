@@ -10,6 +10,8 @@ from math import floor
 from collections import defaultdict
 import random
 import math
+import time
+from shutil import copyfile
 
 
 class DatasetSplit(Dataset):
@@ -274,16 +276,16 @@ def get_datasets(data):
             'train': transforms.Compose([
                 transforms.ToTensor()
             ]),
-            'val': transforms.Compose([
+            'test': transforms.Compose([
                 transforms.ToTensor()
             ]),
         }
-        _data_dir = '../data/tiny-imagenet-200/'
+        _data_dir = './data/tiny-imagenet-200/'
         train_dataset = datasets.ImageFolder(os.path.join(_data_dir, 'train'),
                                              _data_transforms['train'])
         # print(train_dataset[0][0].shape)
-        test_dataset = datasets.ImageFolder(os.path.join(_data_dir, 'val'),
-                                            _data_transforms['val'])
+        test_dataset = datasets.ImageFolder(os.path.join(_data_dir, 'test'),
+                                            _data_transforms['test'])
         train_dataset.targets = torch.tensor(train_dataset.targets)
         test_dataset.targets = torch.tensor(test_dataset.targets)
     return train_dataset, test_dataset
@@ -295,8 +297,8 @@ def get_loss_n_accuracy(model, criterion, data_loader, args, round, num_classes=
     # disable BN stats during inference
     model.eval()
     total_loss, correctly_labeled_samples = 0, 0
-    confusion_matrix = torch.zeros(num_classes, num_classes)
-    not_correct_samples = []
+    # confusion_matrix = torch.zeros(num_classes, num_classes)
+    # not_correct_samples = []
     # forward-pass to get loss and predictions of the current batch
     all_labels = []
     # if round % 20 == 0:
@@ -336,14 +338,13 @@ def get_loss_n_accuracy(model, criterion, data_loader, args, round, num_classes=
         # not_correct_samples.append(  wrong_inputs )
         correctly_labeled_samples += torch.sum(torch.eq(pred_labels, labels)).item()
         # fill confusion_matrix
-        for t, p in zip(labels.view(-1), pred_labels.view(-1)):
-            confusion_matrix[t.long(), p.long()] += 1
+        # for t, p in zip(labels.view(-1), pred_labels.view(-1)):
+            # confusion_matrix[t.long(), p.long()] += 1
 
     avg_loss = total_loss / len(data_loader.dataset)
     accuracy = correctly_labeled_samples / len(data_loader.dataset)
-    per_class_accuracy = confusion_matrix.diag() / confusion_matrix.sum(1)
-    return avg_loss, (accuracy, per_class_accuracy), not_correct_samples
-
+    # per_class_accuracy = confusion_matrix.diag() / confusion_matrix.sum(1)
+    return accuracy
 
 def poison_dataset(dataset, args, data_idxs=None, poison_all=False, agent_idx=-1, modify_label=True):
     # if data_idxs != None:
@@ -787,20 +788,66 @@ def parameters_dict_to_vector_flt(net_dict) -> torch.Tensor:
     return torch.cat(vec)
 
 
-def print_exp_details(args):
-    print('======================================')
-    print(f'    Dataset: {args.data}')
-    print(f'    Global Rounds: {args.rounds}')
-    print(f'    Aggregation Function: {args.aggr}')
-    print(f'    Number of agents: {args.num_agents}')
-    print(f'    Fraction of agents: {args.agent_frac}')
-    print(f'    Batch size: {args.bs}')
-    print(f'    Client_LR: {args.client_lr}')
-    print(f'    Server_LR: {args.server_lr}')
-    print(f'    Client_Momentum: {args.client_moment}')
-    print(f'    RobustLR_threshold: {args.robustLR_threshold}')
-    print(f'    Noise Ratio: {args.noise}')
-    print(f'    Number of corrupt agents: {args.num_corrupt}')
-    print(f'    Poison Frac: {args.poison_frac}')
-    print(f'    Clip: {args.clip}')
-    print('======================================')
+
+def setup_logging(args):
+    """
+    Sets up the logging environment and creates necessary directories.
+    
+    Args:
+        args: Arguments object containing logging parameters like non_iid, alpha, data, and aggr.
+        
+    Returns:
+        dir_path: The directory path where logs and backup files are stored.
+    """
+    log_formatter = logging.Formatter("%(asctime)s [%(threadName)-12.12s] [%(levelname)-5.5s]  %(message)s")
+    root_logger = logging.getLogger()
+    root_logger.setLevel(logging.INFO)
+    
+    # Clear existing handlers to avoid duplicates
+    if root_logger.hasHandlers():
+        root_logger.handlers.clear()
+    
+    logPath = "logs"
+    time_str = time.strftime("%Y-%m-%d-%H-%M")
+
+    if args.non_iid:
+        iid_str = 'noniid(%.1f)' % args.alpha
+    else:
+        iid_str = 'iid'
+
+    args.exp_name = iid_str + '_pr(%.1f)' % args.poison_frac
+
+    if args.exp_name_extra != '':
+        args.exp_name += '_%s' % args.exp_name_extra
+
+    fileName = "%s_%s" % (time_str, args.exp_name)
+
+    dir_path = '%s/%s/attack_%s_ar_%.2f/defense_%s/%s/' % (logPath, args.data, args.attack, args.num_corrupt / args.num_agents, args.aggr, fileName)
+    file_path = dir_path + 'backup_file/'
+
+    if not os.path.exists(dir_path):
+        os.makedirs(dir_path)
+
+    if not os.path.exists(file_path):
+        os.makedirs(file_path)
+
+    backup_file = ['aggregation.py', 'federated.py', 'agent.py']
+
+    for file in backup_file:
+        copyfile('./%s' % file, file_path + file)
+    
+    # Set up file handler for logging
+    file_handler = logging.FileHandler(os.path.join(dir_path, f"{fileName}.log"))
+    file_handler.setFormatter(log_formatter)
+    root_logger.addHandler(file_handler)
+    
+    # Set up console handler for logging
+    console_handler = logging.StreamHandler()
+    console_handler.setLevel(logging.INFO)
+    console_handler.setFormatter(log_formatter)
+    root_logger.addHandler(console_handler)
+    
+    # Log initial arguments
+    logging.info(args)
+    return dir_path
+
