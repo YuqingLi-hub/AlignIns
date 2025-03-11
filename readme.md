@@ -49,6 +49,8 @@ Here,
 
 For other arguments, you can check the `federated.py` file where the detailed explanation is presented.
 
+## Citation
+Coming soon.
 
 ## Acknowledgment
 Our code is constructed on https://github.com/git-disl/Lockdown, big thanks to their contribution!
