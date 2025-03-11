@@ -48,7 +48,7 @@ class Aggregation():
         elif self.args.aggr == "mkrum":
             aggregated_updates = self.agg_mkrum(agent_updates_dict)
         elif self.args.aggr == "rfa":
-            aggregated_updates = self.agg_gm(agent_updates_dict)
+            aggregated_updates = self.agg_rfa(agent_updates_dict)
         neurotoxin_mask = {}
         updates_dict = vector_to_name_param(aggregated_updates, copy.deepcopy(global_model.state_dict()))
         for name in updates_dict:
@@ -66,18 +66,10 @@ class Aggregation():
 
     def agg_rfa(self, agent_updates_dict):
         local_updates = []
-        benign_id = []
-        malicious_id = []
 
         for _id, update in agent_updates_dict.items():
             local_updates.append(update)
-            if _id < self.args.num_corrupt:
-                malicious_id.append(_id)
-            else:
-                benign_id.append(_id)
 
-        chosen_clients = malicious_id + benign_id
-        num_chosen_clients = len(malicious_id + benign_id)
         n = len(local_updates)
         temp_updates = torch.stack(local_updates, dim=0)
         weights = torch.ones(n).to(self.args.device)  
