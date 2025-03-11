@@ -5,6 +5,10 @@ This is the official implementation for CVPR'25 paper "Detecting Backdoor Attack
 
 ## Usage
 
+If you have any issues using this repo, feel free to contact Jiahao @ jiahaox@unr.edu.
+
+The proposed aggregation rule AlignIns is placed in `src/aggregation.py`, and you can easily take it and integrate AlignIns with your code.
+
 ### Environment
 
 Our code does not rely on special libraries or tools, so it can be easily integrated with most environment settings. 
