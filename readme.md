@@ -38,12 +38,17 @@ Here,
 
 | Argument        | Type       | Description   | Choice |
 |-----------------|------------|---------------|--------|
-| `aggr`         | str   | Defense method applied by the server | avg, mkrum, flame, rfa, foolsgold, mmetric, rlr, lockdown|
-| `data`    |   str     | ID data for all clients          | cifar10, cifar100 |
-| `attack`         | str | attack method used   | badnet, pgd, neurotoxin, lie |
+| `aggr`         | str   | Defense method applied by the server | avg, alignins, rlr, mkrum, mmetric, lockdown, foolsgold, rfa|
+| `data`    |   str     | Main task data        | cifar10, cifar100, tinyimagenet |
+| `num_agents`         | int | Number of clients in FL   | N/A |
+| `attack`         | str | Attack method   | badnet, DBA, neurotoxin, pgd |
+| `poison_frac`         | float | Data poisoning ratio   | [0.0, 1.0] |
+| `num_corrupt`         | int | Number of malicious clients in FL   | [0, num_agents//2-1] |
 | `non_iid`         | store_true | Enable non-IID settings or not      | N/A |
-| `alpha`         | float | Data heterogeneous degree     | from 0.1 to 1.0|
+| `alpha`         | float | Data heterogeneous degree     | [0.1, 1.0]|
 
 For other arguments, you can check the `federated.py` file where the detailed explanation is presented.
 
 
+## Acknowledgment
+Our code is constructed on https://github.com/git-disl/Lockdown, big thanks to their contribution!

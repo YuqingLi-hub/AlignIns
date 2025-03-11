@@ -154,14 +154,16 @@ class Aggregation():
 
         benign_updates = torch.stack([local_updates[i] for i in benign_idx], dim=0)
 
-        grad_norm = torch.norm(benign_updates, dim=1).reshape((-1, 1))
-        norm_clip = grad_norm.median(dim=0)[0].item()
+        ######## Post-filtering model clipping ########
+        
+        updates_norm = torch.norm(benign_updates, dim=1).reshape((-1, 1))
+        norm_clip = updates_norm.median(dim=0)[0].item()
         benign_updates = torch.stack(local_updates, dim=0)
-        grad_norm = torch.norm(benign_updates, dim=1).reshape((-1, 1))
-        grad_norm_clipped = torch.clamp(grad_norm, 0, norm_clip, out=None)
+        updates_norm = torch.norm(benign_updates, dim=1).reshape((-1, 1))
+        updates_norm_clipped = torch.clamp(updates_norm, 0, norm_clip, out=None)
         # del grad_norm
         
-        benign_updates = (benign_updates/grad_norm)*grad_norm_clipped
+        benign_updates = (benign_updates/updates_norm)*updates_norm_clipped
 
         correct = 0
         for idx in benign_idx:
