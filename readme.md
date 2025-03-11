@@ -15,6 +15,8 @@ If you want to use the same settings as us, we provide the conda environment we 
 
 CIFAR-10 and CIFAR-100 datasets are available on `torchvision` and will be downloaded automatically.
 
+Tiny-ImageNet can be easily downloaded from Kaggle.
+
 ### Example
 
 Generally, to run a case with default settings, you can easily use the following command:
