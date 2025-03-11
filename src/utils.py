@@ -135,7 +135,7 @@ def distribute_data_dirichlet(dataset, args):
             np.random.shuffle(idx_k)
             # using dirichlet distribution to determine the unbalanced proportion for each client (client_num in total)
             # e.g., when client_num = 4, proportions = [0.29543505 0.38414498 0.31998781 0.00043216], sum(proportions) = 1
-            proportions = np.random.dirichlet(np.repeat(args.alpha, client_num))
+            proportions = np.random.dirichlet(np.repeat(args.beta, client_num))
 
             # get the index in idx_k according to the dirichlet distribution
             proportions = np.array([p * (len(idx_j) < N / client_num) for p, idx_j in zip(proportions, idx_batch)])
@@ -811,7 +811,7 @@ def setup_logging(args):
     time_str = time.strftime("%Y-%m-%d-%H-%M")
 
     if args.non_iid:
-        iid_str = 'noniid(%.1f)' % args.alpha
+        iid_str = 'noniid(%.1f)' % args.beta
     else:
         iid_str = 'iid'
 

@@ -47,7 +47,7 @@ Here,
 | `poison_frac`         | float | Data poisoning ratio   | [0.0, 1.0] |
 | `num_corrupt`         | int | Number of malicious clients in FL   | [0, num_agents//2-1] |
 | `non_iid`         | store_true | Enable non-IID settings or not      | N/A |
-| `alpha`         | float | Data heterogeneous degree     | [0.1, 1.0]|
+| `beta`         | float | Data heterogeneous degree     | [0.1, 1.0]|
 
 For other arguments, you can check the `federated.py` file where the detailed explanation is presented.
 
