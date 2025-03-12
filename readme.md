@@ -2,6 +2,9 @@
 
 This is the official implementation for CVPR'25 paper "Detecting Backdoor Attacks in Federated Learning via Direction Alignment Inspection".
 
+You can find the paper [here][paper].
+
+[paper]: https://arxiv.org/abs/2503.07978
 
 ## Usage
 
@@ -56,7 +59,17 @@ Here,
 For other arguments, you can check the `federated.py` file where the detailed explanation is presented.
 
 ## Citation
-Coming soon.
+```
+@misc{xu2025detectingbackdoorattacksfederated,
+      title={Detecting Backdoor Attacks in Federated Learning via Direction Alignment Inspection}, 
+      author={Jiahao Xu and Zikai Zhang and Rui Hu},
+      year={2025},
+      eprint={2503.07978},
+      archivePrefix={arXiv},
+      primaryClass={cs.LG},
+      url={https://arxiv.org/abs/2503.07978}, 
+}
+```
 
 ## Acknowledgment
 Our code is constructed on https://github.com/git-disl/Lockdown, big thanks to their contribution!
