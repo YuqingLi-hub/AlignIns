@@ -60,14 +60,11 @@ For other arguments, you can check the `federated.py` file where the detailed ex
 
 ## Citation
 ```
-@misc{xu2025detectingbackdoorattacksfederated,
-      title={Detecting Backdoor Attacks in Federated Learning via Direction Alignment Inspection}, 
-      author={Jiahao Xu and Zikai Zhang and Rui Hu},
-      year={2025},
-      eprint={2503.07978},
-      archivePrefix={arXiv},
-      primaryClass={cs.LG},
-      url={https://arxiv.org/abs/2503.07978}, 
+@article{xu2025detecting,
+  title={Detecting Backdoor Attacks in Federated Learning via Direction Alignment Inspection},
+  author={Xu, Jiahao and Zhang, Zikai and Hu, Rui},
+  journal={arXiv preprint arXiv:2503.07978},
+  year={2025}
 }
 ```
 
