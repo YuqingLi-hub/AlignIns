@@ -1,6 +1,6 @@
 ## Detecting Backdoor Attacks in Federated Learning via Direction Alignment Inspection
 
-This is the official implementation for CVPR'25 paper "Detecting Backdoor Attacks in Federated Learning via Direction Alignment Inspection".
+This is the official implementation for CVPR'25 $${\color{red}Highlight}$$ paper "Detecting Backdoor Attacks in Federated Learning via Direction Alignment Inspection".
 
 You can find the paper [here][paper].
 
