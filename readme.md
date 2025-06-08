@@ -60,11 +60,13 @@ For other arguments, you can check the `federated.py` file where the detailed ex
 
 ## Citation
 ```
-@article{xu2025detecting,
-  title={Detecting Backdoor Attacks in Federated Learning via Direction Alignment Inspection},
-  author={Xu, Jiahao and Zhang, Zikai and Hu, Rui},
-  journal={arXiv preprint arXiv:2503.07978},
-  year={2025}
+@InProceedings{Xu_2025_CVPR,
+    author    = {Xu, Jiahao and Zhang, Zikai and Hu, Rui},
+    title     = {Detecting Backdoor Attacks in Federated Learning via Direction Alignment Inspection},
+    booktitle = {Proceedings of the Computer Vision and Pattern Recognition Conference (CVPR)},
+    month     = {June},
+    year      = {2025},
+    pages     = {20654-20664}
 }
 ```
 
