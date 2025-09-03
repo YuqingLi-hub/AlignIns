@@ -5,6 +5,7 @@ from torch.nn.utils import parameters_to_vector
 import numpy as np
 import logging
 from utils import vector_to_model, vector_to_name_param
+from sklearn.cluster import KMeans, DBSCAN, MeanShift, estimate_bandwidth
 
 import sklearn.metrics.pairwise as smp
 from geom_median.torch import compute_geometric_median 
@@ -403,3 +404,125 @@ class Aggregation():
         print(aggregated_model.shape)
 
         return aggregated_model
+    
+
+    def agg_signguard(self, agent_updates_dict):
+        f = self.args.num_corrupt
+        benign_id = []
+        malicious_id = []
+
+        for _id, update in agent_updates_dict.items():
+            # local_updates.append(update)
+            if _id < self.args.num_corrupt:
+                malicious_id.append(_id)
+            else:
+                benign_id.append(_id)
+
+        gradients = [v for v in agent_updates_dict.values()]
+        num_users = len(gradients)
+        all_set = set([i for i in range(num_users)])
+        iters = 1
+        # stack all the gradients to one
+        grads = torch.stack(gradients, dim=0)
+        grads[torch.isnan(grads)] = 0 # remove nan
+
+        # gradient norm-based clustering, calculate the l2 norm of each gradient
+        grad_l2norm = torch.norm(grads, dim=1).cpu().numpy()
+        norm_max = grad_l2norm.max()
+        norm_med = np.median(grad_l2norm)
+        # initialize benign index set, filter for first time
+        benign_idx1 = all_set
+        benign_idx1 = benign_idx1.intersection(set([int(i) for i in np.argwhere(grad_l2norm > 0.1*norm_med)]))
+        benign_idx1 = benign_idx1.intersection(set([int(i) for i in np.argwhere(grad_l2norm < 3.0*norm_med)]))
+
+        ## sign-gradient based clustering
+        num_param = grads.shape[1]
+        # select a small portion (0.1) of parameters to calculate the sign gradient
+        num_spars = int(0.1 * num_param)
+        # filter from the all users set
+        benign_idx2 = all_set
+
+        dbscan = 0
+        meanshif = int(1-dbscan)
+
+        for it in range(iters):
+            # randomly select a portion of parameters
+            idx = torch.randint(0, (num_param - num_spars),size=(1,)).item()
+            gradss = grads[:, idx:(idx+num_spars)]
+            # get the sign of the gradients, and sum the sign gradients
+            sign_grads = torch.sign(gradss)
+            sign_pos = (sign_grads.eq(1.0)).sum(dim=1, dtype=torch.float32)/(num_spars)
+            sign_zero = (sign_grads.eq(0.0)).sum(dim=1, dtype=torch.float32)/(num_spars)
+            sign_neg = (sign_grads.eq(-1.0)).sum(dim=1, dtype=torch.float32)/(num_spars)
+            # calculate the normalized sign proportion of each clients
+            pos_max = sign_pos.max()
+            pos_feat = sign_pos / (pos_max + 1e-8)
+            zero_max = sign_zero.max()
+            zero_feat = sign_zero / (zero_max + 1e-8)
+            neg_max = sign_neg.max()
+            neg_feat = sign_neg / (neg_max + 1e-8)
+            # print("pos_feat", pos_feat.shape, "zero_feat", zero_feat.shape, "neg_feat", neg_feat.shape)
+            feat = [pos_feat, zero_feat, neg_feat]
+            sign_feat = torch.stack(feat, dim=1).cpu().numpy()
+
+            # in paper they use MeanShift to cluster
+            if dbscan:
+                clf_sign = DBSCAN(eps=0.05, min_samples=2).fit(sign_feat)
+                labels = clf_sign.labels_
+                n_cluster = len(set(labels)) - (1 if -1 in labels else 0)
+                num_class = []
+                for i in range(n_cluster):
+                    num_class.append(np.sum(labels==i))
+                benign_class = np.argmax(num_class)
+                benign_idx2 = benign_idx2.intersection(set([int(i) for i in np.argwhere(labels==benign_class)]))
+            else:
+                # print(time.time(), "Meanshift clustering")
+                bandwidth = estimate_bandwidth(sign_feat, quantile=0.5, n_samples=50)
+                ms = MeanShift(bandwidth=bandwidth, bin_seeding=True, cluster_all=False)
+                ms.fit(sign_feat)
+                labels = ms.labels_
+                cluster_centers = ms.cluster_centers_
+                labels_unique = np.unique(labels)
+                # print("labels_unique", labels_unique)
+                n_cluster = len(labels_unique) - (1 if -1 in labels_unique else 0)
+                num_class = []
+                for i in range(n_cluster):
+                    num_class.append(np.sum(labels==i))
+                benign_class = np.argmax(num_class)
+                benign_idx2 = benign_idx2.intersection(set([int(i) for i in np.argwhere(labels==benign_class)]))
+                # print(time.time(), "Meanshift clustering end")
+        benign_idx = list(benign_idx2.intersection(benign_idx1))
+        # print("benign_idx", benign_idx, "len", len(benign_idx))
+        # calculate the misclassified attackers (because the byzantine idx is smaller than benign idx)
+        byz_num = (np.array(benign_idx)<f).sum()
+        # print("byz_num", byz_num)
+
+        grad_norm = torch.norm(grads, dim=1).reshape((-1, 1))
+        norm_clip = grad_norm.median(dim=0)[0].item()
+        grad_norm_clipped = torch.clamp(grad_norm, 0, norm_clip, out=None)
+        grads_clip = (grads/grad_norm)*grad_norm_clipped
+        
+        global_grad = grads_clip[benign_idx].mean(dim=0)
+        correct = 0
+        for idx in benign_idx:
+            if idx >= len(malicious_id):
+                correct += 1
+
+        TPR = correct / len(benign_id)
+
+        if len(malicious_id) == 0:
+            FPR = 0
+        else:
+            wrong = 0
+            for idx in benign_idx:
+                if idx < len(malicious_id):
+                    wrong += 1
+            FPR = wrong / len(malicious_id)
+
+        logging.info('SignGuard benign update index:   %s' % str(benign_id))
+        logging.info('SignGuard selected update index: %s' % str(benign_idx))
+
+        logging.info('SignGuard FPR:       %.4f'  % FPR)
+        logging.info('SignGuard TPR:       %.4f' % TPR)
+
+        return global_grad # this is the attack success rate

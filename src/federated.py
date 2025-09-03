@@ -120,6 +120,7 @@ if __name__ == "__main__":
             "mmetric",
             "lockdown",
             "foolsgold",
+            "signguard",
             "rfa",
         ],
         help="aggregation function to aggregate agents' local weights",
