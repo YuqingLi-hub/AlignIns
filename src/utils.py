@@ -5,6 +5,7 @@ import os
 import torch
 import numpy as np
 from torch.utils.data import Dataset
+from torch.nn.utils import vector_to_parameters
 from torchvision import datasets, transforms
 from math import floor
 from collections import defaultdict
@@ -851,3 +852,53 @@ def setup_logging(args):
     logging.info(args)
     return dir_path
 
+def embedding_watermark_on_position(masks,whole_grads,Watermark,message,alpha,k,model=None):
+    # device = whole_grads.device
+    device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
+    # alpha = args.alpha
+    # k = args.k
+    # delta = args.delta
+    # print('Alpha used in embedding: ', alpha, delta, k)
+
+    # Extract the section to watermark
+    grad_unwater = whole_grads[masks[0]:masks[1]]
+    grad_unwater = grad_unwater.detach().cpu()
+    w_ = Watermark.embed(grad_unwater, m=message, alpha=alpha, k=k).to(device)
+
+    # Update the flat tensor
+    whole_grads[masks[0]:masks[1]].copy_(w_)
+
+    # If model is provided, update the actual model parameters in-place
+    if model is not None:
+        with torch.no_grad():
+            # vector_to_parameters(whole_grads,model.parameters())
+            vector_to_model(whole_grads, model)
+            # start = 0
+            # for p in model.parameters():
+            #     numel = p.numel()
+            #     p.data.copy_(whole_grads[start:start+numel].view_as(p))
+            #     start += numel
+    return whole_grads
+
+def detect_recover_on_position(masks,whole_grads,Watermark,alpha,k,model=None):
+    device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
+    # alpha = args.alpha
+    # k = args.k
+    # delta = args.delta
+    # print('Alpha used in detecting: ',alpha,delta,k)
+    grad_water = copy.deepcopy(whole_grads[masks[0]:masks[1]])
+    grad_water = grad_water.detach().cpu()
+    r_w,mm = Watermark.detect(grad_water,alpha=alpha,k=k)
+
+    reconstructed_grad = r_w.to(device)
+    whole_grads[masks[0]:masks[1]].copy_(reconstructed_grad)
+    if model is not None:
+        with torch.no_grad():
+            # vector_to_parameters(whole_grads,model.parameters())
+            vector_to_model(whole_grads, model)
+            # start = 0
+            # for p in model.parameters():
+            #     numel = p.numel()
+            #     p.data.copy_(whole_grads[start:start+numel].view_as(p))
+            #     start += numel
+    return whole_grads, mm.to(device)

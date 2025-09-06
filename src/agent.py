@@ -3,15 +3,21 @@ import time
 
 import torch
 import utils
-from torch.nn.utils import parameters_to_vector
+from torch.nn.utils import parameters_to_vector,vector_to_parameters
 from torch.utils.data import DataLoader
+from watermarks.modi_qim import QIM
 
 class Agent():
     def __init__(self, id, args, train_dataset=None, data_idxs=None, mask=None, backdoor_train_dataset=None):
         self.id = id
         self.args = args
         self.error = 0
+        self.logging = args.logging
         self.hessian_metrix = []
+        if args.watermark:
+            self.rqim = QIM
+            # self.alpha = args.alpha
+            # self.k = args.k
         # get datasets, fedemnist is handled differently as it doesn't come with pytorch
         if self.args.data != "tinyimagenet":
             self.train_dataset = utils.DatasetSplit(train_dataset, data_idxs)
@@ -44,12 +50,24 @@ class Agent():
             self.train_loader = DataLoader(self.train_dataset, batch_size=self.args.bs, shuffle=True, \
                                            num_workers=self.args.num_workers, pin_memory=False, drop_last=True)
 
-    def local_train(self, global_model, criterion, round=None, neurotoxin_mask=None):
+    def local_train(self, global_model, criterion, round=None, neurotoxin_mask=None,masks=None,delta=None,alpha=None,k=None):
         # print(len(self.train_dataset))
         """ Do a local training over the received global model, return the update """
         # start = time.time()
+        if delta is not None:
+            qim = self.rqim(delta=delta)
+        
         initial_global_model_params = parameters_to_vector(
             [global_model.state_dict()[name] for name in global_model.state_dict()]).detach()
+        print(f"-------- Received model params for client {self.id}: {initial_global_model_params[masks[0]:masks[0]+5]} -------")
+        if qim:
+            grad_water = copy.deepcopy(initial_global_model_params)
+            initial_global_model_params, self.m = utils.detect_recover_on_position(masks=masks,whole_grads=grad_water,alpha=alpha,k=k,Watermark=qim,model=global_model)
+            # vector_to_parameters(initial_global_model_params,global_model.parameters())
+        # self.logging.info(torch.allclose(parameters_to_vector(global_model.parameters()),initial_global_model_params))
+            print(f"Recovered model params for client {self.id}: {parameters_to_vector(
+                [global_model.state_dict()[name] for name in global_model.state_dict()]).detach()[masks[0]:masks[0]+5]}")
+        # print(initial_global_model_params[masks[0]:masks[0]+5])
         if self.id < self.args.num_corrupt:
             self.check_poison_timing(round)
         global_model.train()
@@ -107,5 +125,14 @@ class Agent():
             after_train = parameters_to_vector(
                 [global_model.state_dict()[name] for name in global_model.state_dict()]).detach()
             self.update = after_train - initial_global_model_params
-
+            if qim:
+                _user_param = copy.deepcopy(self.update)
+                update_param_w = utils.embedding_watermark_on_position(
+                    masks, _user_param, qim, self.m, alpha=alpha,k=k, model=global_model
+                )
+                # print(f"watermared model params for client {self.id}: {update_param_w[masks[0]:masks[0]+5]}")
+                # print(f"unwatermared model params for client {self.id}: {self.update[masks[0]:masks[0]+5]}")
+                return update_param_w
+            
+            print(f"------------ model updates:{self.update[masks[0]:masks[0]+5]} -------------")
             return self.update

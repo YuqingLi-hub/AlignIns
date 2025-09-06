@@ -82,7 +82,7 @@ class Aggregation():
         aggregated_model = gw
         return aggregated_model
 
-    def agg_alignins(self, agent_updates_dict, flat_global_model):
+    def agg_alignins(self, agent_updates_dict, p):
         local_updates = []
         benign_id = []
         malicious_id = []
@@ -476,8 +476,16 @@ class Aggregation():
                 benign_class = np.argmax(num_class)
                 benign_idx2 = benign_idx2.intersection(set([int(i) for i in np.argwhere(labels==benign_class)]))
             else:
+                uniq, counts = np.unique(sign_feat, axis=0, return_counts=True)
+                
+                bandwidth = estimate_bandwidth(sign_feat, quantile=0.5, n_samples=min(50, len(sign_feat)))
+                if bandwidth <= 0:
+                    print("Unique rows:", len(uniq), " / total:", len(sign_feat))
+                    print("Max duplicate count:", counts.max())
+                    print("Warning: estimated bandwidth <= 0, defaulting to std or 1.0")
+                    bandwidth = np.std(sign_feat) or 1.0
                 # print(time.time(), "Meanshift clustering")
-                bandwidth = estimate_bandwidth(sign_feat, quantile=0.5, n_samples=50)
+                # bandwidth = estimate_bandwidth(sign_feat, quantile=0.5, n_samples=50)
                 ms = MeanShift(bandwidth=bandwidth, bin_seeding=True, cluster_all=False)
                 ms.fit(sign_feat)
                 labels = ms.labels_

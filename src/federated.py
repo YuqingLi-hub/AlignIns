@@ -15,6 +15,7 @@ import logging
 import argparse
 import os
 import warnings
+from watermarks.modi_qim import QIM
 
 warnings.filterwarnings("ignore")
 
@@ -37,7 +38,7 @@ if __name__ == "__main__":
         "--agent_frac", type=float, default=1.0, help="fraction of agents per round:C"
     )
     parser.add_argument(
-        "--num_corrupt", type=int, default=2, help="number of corrupt agents"
+        "--num_corrupt", type=int, default=0, help="number of corrupt agents"
     )
     parser.add_argument(
         "--rounds", type=int, default=150, help="number of communication rounds:R"
@@ -137,16 +138,22 @@ if __name__ == "__main__":
     parser.add_argument("--sparsity", type=float, default=0.3)
     parser.add_argument("--lambda_s", type=float, default=1.0)
     parser.add_argument("--lambda_c", type=float, default=1.0)
-
+    parser.add_argument("--watermark", type=bool, default=True)
+    parser.add_argument("--alpha", type=float, default=0.7)
+    parser.add_argument("--delta", type=float, default=1.0)
+    parser.add_argument("--k", type=float, default=0)
+    parser.add_argument("--job", type=str,default="ALTestDefault")
     args = parser.parse_args()
 
     if args.clean:
         args.num_corrupt = 0
         args.exp_name_extra = "clean"
-
+    args.logging = logging
     if args.super_power:
         args.exp_name_extra = "sp"
-
+    if args.watermark:
+        logging.info("Watermarking")
+        args.rqim = QIM(args.delta)
     per_data_dict = {
         "rounds": {"fmnist": 50, "cifar10": 100, "cifar100": 100, "tinyimagenet": 50},
         "num_target": {"fmnist": 10, "cifar10": 10, "cifar100": 100, "tinyimagenet": 200,},
@@ -292,6 +299,25 @@ if __name__ == "__main__":
                 for name in global_model.state_dict()
             ]
         )
+        mask = None
+        if args.watermark:
+            num_param = len(rnd_global_params)
+            num_spars = 1000
+            idx = torch.randint(0, (num_param - num_spars),size=(1,)).item()
+            grads_unwater = copy.deepcopy(rnd_global_params)
+            message = args.rqim.random_msg(num_spars)
+            mask = [idx,idx+num_spars]
+            print(f"Global model params: {rnd_global_params[mask[0]:mask[0]+5]}")
+            grads_water = utils.embedding_watermark_on_position(masks=mask,whole_grads=grads_unwater,Watermark=args.rqim,message=message,alpha=args.alpha,k=args.k)
+            utils.vector_to_model(copy.deepcopy(grads_water), global_model)
+            if torch.allclose(parameters_to_vector(global_model.parameters()),grads_water):
+                logging.info("Successfully update Watermarked parameter!")
+            else:
+                logging.warning("Update Failure")
+            rnd_global_params = grads_water
+        client_alpha = args.alpha
+        client_k = args.k
+        client_delta = args.delta
         agent_updates_dict = {}
         chosen = np.random.choice(
             args.num_agents,
@@ -318,16 +344,41 @@ if __name__ == "__main__":
                 )
             else:
                 update = agents[agent_id].local_train(
-                    global_model, criterion, rnd, neurotoxin_mask=neurotoxin_mask
+                    global_model, criterion, rnd, neurotoxin_mask=neurotoxin_mask,masks=mask,delta=client_delta,alpha=client_alpha, k=client_k
                 )
-            agent_updates_dict[agent_id] = update
-            utils.vector_to_model(copy.deepcopy(rnd_global_params), global_model)
+            check = parameters_to_vector(
+                [
+                    copy.deepcopy(global_model.state_dict()[name])
+                    for name in global_model.state_dict()
+                ]
+            )
+            # if mask is not None:
+            #     print(f"after agent {agent_id} model parameter:{check[mask[0]:mask[0]+5]}")
+            #     print(f"agent {agent_id} update:{update[mask[0]:mask[0]+5]}")
+            # else:
+            #     print(f"after agent {agent_id} model parameter:{check[:10]}")
+            #     print(f"agent {agent_id} update:{update[:10]}")
+            agent_updates_dict[agent_id],m = utils.detect_recover_on_position(masks=mask,whole_grads=update,alpha=client_alpha,k=client_k,Watermark=args.rqim) if args.watermark else update
 
+            # if mask is not None:
+            #     print(f"after recover model parameter:{agent_updates_dict[agent_id][mask[0]:mask[0]+5]}")
+            # else:
+            #     print(f"after recover model parameter:{agent_updates_dict[agent_id][:10]}")
+            utils.vector_to_model(copy.deepcopy(rnd_global_params), global_model)
+            
         # aggregate params obtained by agents and update the global params
         updates_dict, neurotoxin_mask = aggregator.aggregate_updates(
             global_model, agent_updates_dict
         )
-
+        check = parameters_to_vector(
+            [
+                copy.deepcopy(global_model.state_dict()[name])
+                for name in global_model.state_dict()
+            ]
+        )
+        print(f"current model parameter:{check[:10]}")
+        # print(f"updates:{updates_dict[:10]}")
+        print(f"")
         # inference in every args.snap rounds
         logging.info("---------Test {} ------------".format(rnd))
         if rnd % args.snap == 0:
