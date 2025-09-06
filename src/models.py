@@ -2,11 +2,14 @@ from resnet import ResNet9
 from vgg import VGG
 import torchvision.models as models
 import torch.nn as nn
-
+from model_cls import CNN, ResNet18, SmallVGG, MLP #,ResNet9
 
 def get_model(data, args):
     if data == 'cifar10':
         model = ResNet9(3,num_classes=10, args=args)
+        # model = ResNet18()
+        # model = SmallVGG()
+        # model = MLP()
     elif data == 'cifar100':
         model = VGG('VGG9',num_classes=100)
     elif data == 'tinyimagenet':

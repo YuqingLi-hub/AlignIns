@@ -8,12 +8,15 @@ import torch.nn as nn
 import numpy as np
 import logging
 import time
+from watermarks.modi_qim import QIM
 
 class Agent():
     def __init__(self, id, args, train_dataset=None, data_idxs=None, mask=None, backdoor_train_dataset=None):
         self.id = id
         self.args = args
         self.error = 0
+        if args.watermark:
+            self.rqim = QIM
         # poisoned datasets, tinyimagenet is handled differently as the dataset is not loaded into memory
         if self.args.data != "tinyimagenet":
             self.train_dataset = utils.DatasetSplit(train_dataset, data_idxs)
@@ -111,9 +114,20 @@ class Agent():
 
 
 
-    def local_train(self, global_model, criterion, round=None, temparature=10, alpha=0.3, global_mask= None, neurotoxin_mask =None, updates_dict =None):
+    def local_train(self, global_model, criterion, round=None, temparature=10, alpha=0.3, global_mask= None, neurotoxin_mask =None, updates_dict =None,masks=None,delta=None,a=None,k=None):
+        # def local_train(self, global_model, criterion, round=None, neurotoxin_mask=None,masks=None,delta=None,alpha=None,k=None):
         """ Do a local training over the received global model, return the update """
         initial_global_model_params = parameters_to_vector([ global_model.state_dict()[name] for name in global_model.state_dict()]).detach()
+        if masks is not None:
+            qim = self.rqim(delta=delta)
+            print(f"-------- Received model params for client {self.id}: {initial_global_model_params[masks[0]:masks[0]+5]} -------")
+            grad_water = copy.deepcopy(initial_global_model_params)
+            initial_global_model_params, self.m = utils.detect_recover_on_position(masks=masks,whole_grads=grad_water,alpha=alpha,k=k,Watermark=qim,model=global_model)
+            # vector_to_parameters(initial_global_model_params,global_model.parameters())
+        # self.logging.info(torch.allclose(parameters_to_vector(global_model.parameters()),initial_global_model_params))
+            print(f"Recovered model params for client {self.id}: {parameters_to_vector(
+                [global_model.state_dict()[name] for name in global_model.state_dict()]).detach()[masks[0]:masks[0]+5]}")
+
         if self.id  <  self.args.num_corrupt:
             self.check_poison_timing(round)
         global_model.to(self.args.device)
@@ -190,5 +204,15 @@ class Agent():
                 logging.info("scale update for" + self.args.attack.split("_",1)[1] + " times")
                 if self.id<  self.args.num_corrupt:
                     self.update=  int(self.args.attack.split("_",1)[1]) * self.update
+
+            if masks is not None:
+                _user_param = copy.deepcopy(self.update)
+                update_param_w = utils.embedding_watermark_on_position(
+                    masks, _user_param, qim, self.m, alpha=alpha,k=k, model=global_model
+                )
+                # print(f"watermared model params for client {self.id}: {update_param_w[masks[0]:masks[0]+5]}")
+                # print(f"unwatermared model params for client {self.id}: {self.update[masks[0]:masks[0]+5]}")
+                print(f"------------ model updates:{self.update[masks[0]:masks[0]+5]} -------------")
+                return update_param_w
         return self.update
 

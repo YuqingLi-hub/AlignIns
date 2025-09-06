@@ -4,7 +4,9 @@ import time
 import torch
 import utils
 from torch.nn.utils import parameters_to_vector,vector_to_parameters
+from torch.nn.utils import parameters_to_vector,vector_to_parameters
 from torch.utils.data import DataLoader
+from watermarks.modi_qim import QIM
 from watermarks.modi_qim import QIM
 
 class Agent():
@@ -13,7 +15,12 @@ class Agent():
         self.args = args
         self.error = 0
         self.logging = args.logging
+        self.logging = args.logging
         self.hessian_metrix = []
+        if args.watermark:
+            self.rqim = QIM
+            # self.alpha = args.alpha
+            # self.k = args.k
         if args.watermark:
             self.rqim = QIM
             # self.alpha = args.alpha
@@ -54,13 +61,14 @@ class Agent():
         # print(len(self.train_dataset))
         """ Do a local training over the received global model, return the update """
         # start = time.time()
-        if delta is not None:
+        if masks is not None:
             qim = self.rqim(delta=delta)
         
         initial_global_model_params = parameters_to_vector(
             [global_model.state_dict()[name] for name in global_model.state_dict()]).detach()
-        print(f"-------- Received model params for client {self.id}: {initial_global_model_params[masks[0]:masks[0]+5]} -------")
-        if qim:
+        
+        if masks is not None:
+            print(f"-------- Received model params for client {self.id}: {initial_global_model_params[masks[0]:masks[0]+5]} -------")
             grad_water = copy.deepcopy(initial_global_model_params)
             initial_global_model_params, self.m = utils.detect_recover_on_position(masks=masks,whole_grads=grad_water,alpha=alpha,k=k,Watermark=qim,model=global_model)
             # vector_to_parameters(initial_global_model_params,global_model.parameters())
@@ -125,14 +133,15 @@ class Agent():
             after_train = parameters_to_vector(
                 [global_model.state_dict()[name] for name in global_model.state_dict()]).detach()
             self.update = after_train - initial_global_model_params
-            if qim:
+            print(f'agent {self.id} has mean {self.update.mean()}, and std {self.update.std()} after local training')
+            if masks is not None:
                 _user_param = copy.deepcopy(self.update)
                 update_param_w = utils.embedding_watermark_on_position(
                     masks, _user_param, qim, self.m, alpha=alpha,k=k, model=global_model
                 )
                 # print(f"watermared model params for client {self.id}: {update_param_w[masks[0]:masks[0]+5]}")
                 # print(f"unwatermared model params for client {self.id}: {self.update[masks[0]:masks[0]+5]}")
+                print(f"------------ model updates:{self.update[masks[0]:masks[0]+5]} -------------")
                 return update_param_w
             
-            print(f"------------ model updates:{self.update[masks[0]:masks[0]+5]} -------------")
             return self.update

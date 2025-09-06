@@ -6,6 +6,7 @@ import torch
 import numpy as np
 from torch.utils.data import Dataset
 from torch.nn.utils import vector_to_parameters
+from torch.nn.utils import vector_to_parameters
 from torchvision import datasets, transforms
 from math import floor
 from collections import defaultdict
@@ -902,3 +903,99 @@ def detect_recover_on_position(masks,whole_grads,Watermark,alpha,k,model=None):
             #     p.data.copy_(whole_grads[start:start+numel].view_as(p))
             #     start += numel
     return whole_grads, mm.to(device)
+
+
+def get_mean_updates(updates,avg_update=None):
+    distances_matrix = []
+    if avg_update is None:
+        avg_update = copy.deepcopy(updates[0])
+        for i in updates[1:]:
+            avg_update += i
+        avg_update = avg_update / len(updates)
+    for idx, w_local in enumerate(updates):
+        distance = euclidean_distance(w_local, avg_update)
+        distances_matrix.append(distance)
+
+    distances = distances_matrix
+    # distances_array = np.array(distances).reshape(-1, 1)
+    return 
+
+    
+def euclidean_distance(local_weights, global_weights):
+    distance = 0
+    # for key in global_weights.keys():
+    #     distance += torch.pow(local_weights[key] - global_weights[key], 2).sum()
+    distance = torch.sum((local_weights - global_weights) ** 2)
+    distance = torch.sqrt(distance)
+    return distance.item()
+
+def decompose_normal_distributions(data, n_components=2):
+    '''
+    Decompose the data into two normal distributions using Gaussian Mixture Model (GMM).
+    Returns the data points in the largest cluster, bounds of the cluster, means, covariances, and weights of the GMM.
+    '''
+    from sklearn.mixture import GaussianMixture
+    gmm = GaussianMixture(n_components=n_components, random_state=0)
+    gmm.fit(data.reshape(-1, 1))
+    labels = gmm.predict(data.reshape(-1, 1))
+    unique_labels, counts = np.unique(labels, return_counts=True)
+    max_cluster_index = unique_labels[np.argmax(counts)]
+    max_cluster_data = data[labels == max_cluster_index]
+    bounds = (max_cluster_data.min(), max_cluster_data.max())
+    return max_cluster_data, bounds, gmm.means_, gmm.covariances_, gmm.weights_
+
+def plot_control_chart(client_id, client_means, distances_matrix, save_dir, L=3, attack=None):
+    """
+    SPC-based anomaly detection algorithm.
+    """
+    from matplotlib import pyplot as plt
+    ano = []
+    distances = [distance for client_list in distances_matrix for distance in client_list]
+    std = np.std(distances)
+    mean = np.mean(distances)
+    # the control limit to select clients, in our study LCL is not used
+    UCL = mean + L *std # Upper Control Limit, sort like the upper bound
+    LCL = mean - L *std
+    
+    plt.figure(figsize=(10, 6))
+    plt.plot(client_id, client_means, marker='o', linestyle='-', color='blue', label='Average Distance')
+    # if the client weight mean is larger than the upper control limit, mark it as anomaly
+    for idx, client_mean in zip(client_id, client_means):
+        if client_mean > UCL:
+            ano.append(idx)
+            plt.plot(idx, client_mean, marker='o', color='red')
+
+    plt.axhline(UCL, color='red', linestyle='--', label='UCL')
+    plt.title('Control Chart for All Clients')
+    plt.xlabel('Client ID')
+    plt.ylabel('Average Distance')
+    plt.legend()
+    plt.savefig(os.path.join(save_dir, f'control_chart_all_clients.png'))
+    plt.close()
+
+    return ano, UCL, LCL
+
+def calculate_accuracy(detected_noisy_clients, actual_noisy_clients):
+    """
+    Calculate the defense metrix of the anomaly detection algorithm.
+    """
+
+    detected_set = set(detected_noisy_clients)
+    actual_set = set(actual_noisy_clients)
+
+    correct_detections = detected_set.intersection(actual_set)
+
+    # Calculate recall
+    if len(actual_set) > 0:
+        R = len(correct_detections) / len(actual_set)
+    else:
+        R = 0.0 
+
+    # Calculate precision
+    if len(detected_set) > 0:
+        P = len(correct_detections) / len(detected_set)
+    else:
+        P = 0.0  
+
+    return R,P
+

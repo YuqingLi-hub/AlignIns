@@ -17,13 +17,19 @@ class Aggregation():
         self.args = args
         self.server_lr = args.server_lr
         self.n_params = n_params
-        
+        if self.args.aggr == 'flgmm':
+            self.r = []
+            self.p = []
+            self.f1 = []
+            self.o = 0
+            self.distances_matrix = []
+            self.UCL = None
         if self.args.aggr == 'foolsgold':
             self.memory_dict = dict()
             self.wv_history = []
         
          
-    def aggregate_updates(self, global_model, agent_updates_dict):
+    def aggregate_updates(self, global_model, agent_updates_dict, epoch=0, g0=None):
 
 
         lr_vector = torch.Tensor([self.server_lr]*self.n_params).to(self.args.device)
@@ -50,6 +56,8 @@ class Aggregation():
             aggregated_updates = self.agg_mkrum(agent_updates_dict)
         elif self.args.aggr == "rfa":
             aggregated_updates = self.agg_rfa(agent_updates_dict)
+        elif self.args.aggr == "flgmm":
+            aggregated_updates = self.agg_flgmm(agent_updates_dict,g0=g0, epoch=epoch, use_g0=self.args.use_g0)
         neurotoxin_mask = {}
         updates_dict = vector_to_name_param(aggregated_updates, copy.deepcopy(global_model.state_dict()))
         for name in updates_dict:
@@ -534,3 +542,205 @@ class Aggregation():
         logging.info('SignGuard TPR:       %.4f' % TPR)
 
         return global_grad # this is the attack success rate
+    
+    def agg_flgmm(self, agent_updates_dict,g0=None, epoch=0, use_g0=False,ccepochs=50):
+        from matplotlib import pyplot as plt
+        import utils
+        import os
+        import seaborn as sns
+        f = self.args.num_corrupt
+        num_users = len(agent_updates_dict)
+        save_dir = f'outputs/FLGMM/{self.args.job}'
+        os.makedirs(save_dir, exist_ok=True)
+        if len(self.distances_matrix) != num_users:
+            self.distances_matrix = [[] for _ in range(num_users)]
+        distances_matrix_this_round = []
+        normal_id = []
+        excluded_clients = []
+        # normal_clients_dis = []
+        # normal_clients_dis_mean = []
+        # normal_std = []
+        normal_dis = [[] for _ in range(num_users)]
+        FedAvg_0 = self.agg_avg
+        if use_g0:
+            w_glob = g0
+        else:
+            w_glob = FedAvg_0(agent_updates_dict)
+        excluded = []
+        gradients = [v for v in agent_updates_dict.values()]
+        # noisy_this_round = []
+        noisy_clients = [i for i in range(f)]
+        # Calculate the euclidean distance between local and centroid weights
+        for idx, w_local in enumerate(gradients):
+            distance = utils.euclidean_distance(w_local, w_glob)
+            distances_matrix_this_round.append(distance)
+
+        distances = distances_matrix_this_round
+        distances_array = np.array(distances).reshape(-1, 1)
+
+        # Utilize GMM to find the largest cluster, return all the weights follows largest cluster
+        largest_cluster_data, bounds, means, covariances, weights = utils.decompose_normal_distributions(distances_array)
+        # print(len(largest_cluster_data))
+        mean = np.mean(largest_cluster_data)
+        std = np.std(largest_cluster_data)
+        # print("Mean of largest cluster:", mean)
+        # print("Std of largest cluster:", std)
+        # use mean and std to normalize the largest cluster, and store them into distanc_matrix for SPC
+        for idx in range(num_users):
+            self.distances_matrix[idx].append((distances[idx]-mean)/std)
+            # if during the initial rounds, directly use GMM results to select normal clients
+            if distances_matrix_this_round[idx] in largest_cluster_data and epoch < ccepochs:
+                normal_id.append(idx)
+
+        # Plot GMM in round 10
+        if epoch == 10:
+            flat_distances3 = distances_matrix_this_round
+            plt.figure(figsize=(10, 6))
+            plt.hist(flat_distances3, bins=50, color='grey', edgecolor='black', density=True, alpha=0.6)
+            x = np.linspace(min(distances_array), max(distances_array), 1000)
+            pdf_1 = weights[0] * (1 / (np.sqrt(2 * np.pi * covariances[0]))) * np.exp(
+                -0.5 * ((x - means[0]) ** 2) / covariances[0])
+            pdf_2 = weights[1] * (1 / (np.sqrt(2 * np.pi * covariances[1]))) * np.exp(
+                -0.5 * ((x - means[1]) ** 2) / covariances[1])
+            pdf_1 = pdf_1.reshape(-1)
+            pdf_2 = pdf_2.reshape(-1)
+            plt.plot(x, pdf_1, color='red', linestyle='-.', label='GMM Component 1')
+            plt.plot(x, pdf_2, color='green', linestyle='-.', label='GMM Component 2')
+            plt.title('Initial Distance Distribution with GMM Components')
+            plt.xlabel('Distance')
+            plt.ylabel('Density')
+            plt.legend()
+            plt.savefig(os.path.join(save_dir, f'GMM_distance_distribution_with_GMM_10rounds.png'))
+            upper_bound = bounds[1]
+            lower_bound = bounds[0]
+            # use upper bounds to filter out the clients in the largest cluster
+            for idx, client_distances in enumerate(self.distances_matrix):
+                normal_dis[idx] = [d for d in client_distances if d <= upper_bound]
+            flat_distances1 = [distance for client_list in normal_dis for distance in client_list]
+            plt.figure(figsize=(10, 6))
+            plt.hist(flat_distances1, bins=40, color='grey', edgecolor='black', density=True)
+            sns.kdeplot(flat_distances1, color='red')
+            plt.title(f'Final Distance Distribution ')
+            plt.xlabel('Distance')
+            plt.ylabel('Density')
+            plt.savefig(os.path.join(save_dir, f'Final_distance_distribution_10round.png'))
+            plt.close()
+        # when the initial rounds is over, use GMM results as reference
+        if epoch == ccepochs:
+            # normalid = []
+            # f_distances_matrix = [[] for _ in range(num_users)]
+            # for each distance in initial rounds (normalized)
+            all_distances = [distance for client_distances in self.distances_matrix for distance in client_distances]
+            distances_array = np.array(all_distances)
+
+            # Utilize GMM again, find the largest cluster and its bounds
+            largest_cluster_data, bounds, means, covariances, weights = utils.decompose_normal_distributions(distances_array)
+            upper_bound = bounds[1]
+            lower_bound = bounds[0]
+            # use the upper bounds to filter out the clients in the largest cluster
+            for idx, client_distances in enumerate(self.distances_matrix):
+                normal_dis[idx] = [d for d in client_distances if d <= upper_bound ]
+            flat_distances3 = [distance for client_list in self.distances_matrix for distance in client_list]
+            plt.figure(figsize=(10, 6))
+            plt.hist(flat_distances3, bins=200, color='grey', edgecolor='black', density=True, alpha=0.6)
+            x = np.linspace(min(distances_array), max(distances_array), 1000)
+            pdf_1 = weights[0] * (1 / (np.sqrt(2 * np.pi * covariances[0]))) * np.exp(
+                -0.5 * ((x - means[0]) ** 2) / covariances[0])
+            pdf_2 = weights[1] * (1 / (np.sqrt(2 * np.pi * covariances[1]))) * np.exp(
+                -0.5 * ((x - means[1]) ** 2) / covariances[1])
+            pdf_1 = pdf_1.reshape(-1)
+            pdf_2 = pdf_2.reshape(-1)
+            plt.plot(x, pdf_1, color='red', linestyle='-.', label='GMM Component 1')
+            plt.plot(x, pdf_2, color='green', linestyle='-.', label='GMM Component 2')
+            plt.title('Initial Distance Distribution with GMM Components')
+            plt.xlabel('Distance')
+            plt.ylabel('Density')
+            plt.legend()
+            plt.savefig(os.path.join(save_dir,f'GMM_distance_distribution_with_GMM.png'))
+
+            flat_distances1 = [distance for client_list in normal_dis for distance in client_list]
+            plt.figure(figsize=(10, 6))
+            plt.hist(flat_distances1, bins=50, color='grey', edgecolor='black', density=True)
+            sns.kdeplot(flat_distances1, color='red')
+            plt.title(f'Final Distance Distribution ')
+            plt.xlabel('Distance')
+            plt.ylabel('Density')
+            plt.savefig(os.path.join(save_dir, f'Final_distance_distribution_round.png'))
+            plt.close()
+
+            # Erase clients in the component with a lager mean, by using GMM again on largest cluster
+            largest_cluster_data_2, bounds_2, means, covariances, weights = utils.decompose_normal_distributions(
+                largest_cluster_data)
+            upper_bound_2 = bounds[1]
+            lower_bound_2 = bounds[0]
+            for idx, client_distances in enumerate(self.distances_matrix):
+                normal_dis[idx] = [d for d in client_distances if d <= upper_bound_2]
+            # find the average distance of each client
+            client_means = [np.mean(distances) for distances in self.distances_matrix]
+            # determine the upper control limit (UCL) of the entire distance
+            excluded_clients, UCL, LCL = utils.plot_control_chart(np.arange(len(client_means)), client_means, normal_dis, save_dir)
+            self.UCL = UCL
+            print('Upper Control Limit:', UCL)
+            print("GMM detects:", excluded_clients)
+            
+            self.r.append(utils.calculate_accuracy(excluded_clients, noisy_clients)[0])
+            self.p.append(utils.calculate_accuracy(excluded_clients, noisy_clients)[1])
+            recall = utils.calculate_accuracy(excluded_clients, noisy_clients)[0]
+            pre = utils.calculate_accuracy(excluded_clients, noisy_clients)[1]
+            print("Initial recall:", self.r[0])
+            print("Initial precision:", self.p[0])
+            if recall + pre == 0:
+                ff = 0.0
+            else:
+                ff = 2 * recall * pre / (recall + pre)
+            self.f1.append(ff)
+            
+            print("Initial f1score:", self.f1[0])
+
+        if epoch > ccepochs:
+            # use UCL to determine the normal clients
+            print('UCL:', self.UCL)
+            for idx, client_distances in enumerate(self.distances_matrix):
+                if self.UCL is not None:
+                    if client_distances[-1] < self.UCL:
+                        normal_id.append(idx)
+                    else:
+                        excluded.append(idx)
+                else:
+                    break
+            excluded_clients = excluded
+            print("Anomaly:", excluded)
+            print("Normal clients:", normal_id)
+            self.r.append(utils.calculate_accuracy(excluded_clients, noisy_clients)[0])
+            self.p.append(utils.calculate_accuracy(excluded_clients, noisy_clients)[1])
+            recall = utils.calculate_accuracy(excluded_clients, noisy_clients)[0]
+            pre = utils.calculate_accuracy(excluded_clients, noisy_clients)[1]
+            if recall + pre == 0:
+                ff = 0.0
+            else:
+                ff = 2 * recall * pre / (recall + pre)
+            self.f1.append(ff)
+            # ff = 2 * recall * pre / (recall + pre)
+            # self.f1.append(ff)
+            print("Recall:", self.r[self.o])
+            print("Precision:", self.p[self.o])
+            print("f1score:", self.f1[self.o])
+            self.o += 1
+
+        # Update global model
+        if epoch < ccepochs:
+            gradients_used = [gradients[i] for i in range(len(gradients)) if i in normal_id]
+            excluded_clients = [i for i in range(len(gradients)) if i not in normal_id]
+            # print('numbers of participants:',len(gradients_used))
+
+        else:
+            gradients_used = [gradients[i] for i in range(len(gradients)) if i not in excluded_clients]
+            normal_id = [i for i in range(len(gradients)) if i not in excluded_clients]
+            # print('numbers of participants:', len(gradients_used))
+        updates_dict = {}
+        for i in range(len(gradients_used)):
+            updates_dict[i] = gradients_used[i]
+        if len(gradients_used) > 0:
+            w_glob = FedAvg_0(updates_dict)
+        byz_num = (np.array(normal_id)<f).sum()
+        return w_glob
