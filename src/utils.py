@@ -999,3 +999,14 @@ def calculate_accuracy(detected_noisy_clients, actual_noisy_clients):
 
     return R,P
 
+def calculate_alpha(updates,args):
+    if args.cal_alpha == 'mean':
+        return abs(updates.mean().item())
+    elif args.cal_alpha == 'median':
+        return abs(updates.median().item())
+    elif args.cal_alpha == 'norm':
+        return abs(updates.norm().item())
+    elif args.cal_alpha == 'min':
+        return updates.min().item()
+    
+# def to

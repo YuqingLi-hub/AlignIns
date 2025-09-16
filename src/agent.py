@@ -21,10 +21,6 @@ class Agent():
             self.rqim = QIM
             # self.alpha = args.alpha
             # self.k = args.k
-        if args.watermark:
-            self.rqim = QIM
-            # self.alpha = args.alpha
-            # self.k = args.k
         # get datasets, fedemnist is handled differently as it doesn't come with pytorch
         if self.args.data != "tinyimagenet":
             self.train_dataset = utils.DatasetSplit(train_dataset, data_idxs)
@@ -61,20 +57,22 @@ class Agent():
         # print(len(self.train_dataset))
         """ Do a local training over the received global model, return the update """
         # start = time.time()
-        if masks is not None:
-            qim = self.rqim(delta=delta)
-        
         initial_global_model_params = parameters_to_vector(
             [global_model.state_dict()[name] for name in global_model.state_dict()]).detach()
-        
+        # aggr_updates = initial_global_model_params - self.previous_global_model_params if hasattr(self,'previous_global_model_params') else torch.zeros_like(initial_global_model_params)
         if masks is not None:
-            print(f"-------- Received model params for client {self.id}: {initial_global_model_params[masks[0]:masks[0]+5]} -------")
+            qim = self.rqim(delta=delta)
+            alpha = abs(self.update.mean()) if hasattr(self, 'update') else alpha
+            print(f"Client {self.id} -- Recovering with alpha {alpha}")
+            # print(f"-------- Received model params for client {self.id}: {initial_global_model_params[masks[0]:masks[0]+5]} -------")
             grad_water = copy.deepcopy(initial_global_model_params)
             initial_global_model_params, self.m = utils.detect_recover_on_position(masks=masks,whole_grads=grad_water,alpha=alpha,k=k,Watermark=qim,model=global_model)
             # vector_to_parameters(initial_global_model_params,global_model.parameters())
+            self.recovered_params = parameters_to_vector(
+                [global_model.state_dict()[name] for name in global_model.state_dict()])
         # self.logging.info(torch.allclose(parameters_to_vector(global_model.parameters()),initial_global_model_params))
-            print(f"Recovered model params for client {self.id}: {parameters_to_vector(
-                [global_model.state_dict()[name] for name in global_model.state_dict()]).detach()[masks[0]:masks[0]+5]}")
+            # print(f"Recovered model params for client {self.id}: {parameters_to_vector(
+            #     [global_model.state_dict()[name] for name in global_model.state_dict()]).detach()[masks[0]:masks[0]+5]}")
         # print(initial_global_model_params[masks[0]:masks[0]+5])
         if self.id < self.args.num_corrupt:
             self.check_poison_timing(round)
@@ -133,15 +131,27 @@ class Agent():
             after_train = parameters_to_vector(
                 [global_model.state_dict()[name] for name in global_model.state_dict()]).detach()
             self.update = after_train - initial_global_model_params
+            self.previous_global_model_params = initial_global_model_params
+            base = self.update.clone()
+            print("client", self.id, "base_norm", base.norm().item(), "base_max", base.abs().max().item())
+
             print(f'agent {self.id} has mean {self.update.mean()}, and std {self.update.std()} after local training')
             if masks is not None:
+                # alpha = self.update.mean() if hasattr(self, 'update') else alpha
+                # print(f"Client -- Embedding alpha is {alpha}")
                 _user_param = copy.deepcopy(self.update)
                 update_param_w = utils.embedding_watermark_on_position(
                     masks, _user_param, qim, self.m, alpha=alpha,k=k, model=global_model
                 )
                 # print(f"watermared model params for client {self.id}: {update_param_w[masks[0]:masks[0]+5]}")
                 # print(f"unwatermared model params for client {self.id}: {self.update[masks[0]:masks[0]+5]}")
-                print(f"------------ model updates:{self.update[masks[0]:masks[0]+5]} -------------")
+                # print("watermarked update mean: %.8f \t std: %.8f" % (update_param_w.mean(), update_param_w.std()))
+                # print(f"------------ model updates:{self.update[masks[0]:masks[0]+5]} -------------\n")
+                embedded = update_param_w.clone()
+                print("client", self.id, "embedded_norm", embedded.norm().item(),
+                    "added_energy", (embedded - base).norm().item(),
+                    "rel_injection", (embedded - base).norm().item() / (base.norm().item() + 1e-12))
+
                 return update_param_w
             
             return self.update

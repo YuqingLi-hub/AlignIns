@@ -29,7 +29,7 @@ class Aggregation():
             self.wv_history = []
         
          
-    def aggregate_updates(self, global_model, agent_updates_dict, epoch=0, g0=None):
+    def aggregate_updates(self, global_model, agent_updates_dict, epoch=0, g0=None,**kwargs):
 
 
         lr_vector = torch.Tensor([self.server_lr]*self.n_params).to(self.args.device)
@@ -57,7 +57,7 @@ class Aggregation():
         elif self.args.aggr == "rfa":
             aggregated_updates = self.agg_rfa(agent_updates_dict)
         elif self.args.aggr == "flgmm":
-            aggregated_updates = self.agg_flgmm(agent_updates_dict,g0=g0, epoch=epoch, use_g0=self.args.use_g0)
+            aggregated_updates = self.agg_flgmm(agent_updates_dict,g0=g0, epoch=epoch, use_g0=self.args.use_g0,**kwargs)
         neurotoxin_mask = {}
         updates_dict = vector_to_name_param(aggregated_updates, copy.deepcopy(global_model.state_dict()))
         for name in updates_dict:
@@ -90,13 +90,16 @@ class Aggregation():
         aggregated_model = gw
         return aggregated_model
 
-    def agg_alignins(self, agent_updates_dict, p):
+    def agg_alignins(self, agent_updates_dict, flat_global_model):
         local_updates = []
         benign_id = []
         malicious_id = []
 
         for _id, update in agent_updates_dict.items():
             local_updates.append(update)
+            if self.args.byz and _id >= len(agent_updates_dict) - self.args.num_byz:
+                malicious_id.append(_id)
+
             if _id < self.args.num_corrupt:
                 malicious_id.append(_id)
             else:
@@ -543,7 +546,7 @@ class Aggregation():
 
         return global_grad # this is the attack success rate
     
-    def agg_flgmm(self, agent_updates_dict,g0=None, epoch=0, use_g0=False,ccepochs=50):
+    def agg_flgmm(self, agent_updates_dict,g0=None, epoch=0, use_g0=False,ccepochs=50, masks=None,alpha=None, k=None):
         from matplotlib import pyplot as plt
         import utils
         import os
@@ -562,7 +565,7 @@ class Aggregation():
         # normal_std = []
         normal_dis = [[] for _ in range(num_users)]
         FedAvg_0 = self.agg_avg
-        if use_g0:
+        if use_g0 and g0 is not None:
             w_glob = g0
         else:
             w_glob = FedAvg_0(agent_updates_dict)
@@ -583,8 +586,8 @@ class Aggregation():
         # print(len(largest_cluster_data))
         mean = np.mean(largest_cluster_data)
         std = np.std(largest_cluster_data)
-        # print("Mean of largest cluster:", mean)
-        # print("Std of largest cluster:", std)
+        print("Mean of largest cluster:", mean)
+        print("Std of largest cluster:", std)
         # use mean and std to normalize the largest cluster, and store them into distanc_matrix for SPC
         for idx in range(num_users):
             self.distances_matrix[idx].append((distances[idx]-mean)/std)
@@ -739,7 +742,13 @@ class Aggregation():
             # print('numbers of participants:', len(gradients_used))
         updates_dict = {}
         for i in range(len(gradients_used)):
-            updates_dict[i] = gradients_used[i]
+            # updates_dict[i] = gradients_used[i]
+            # print(gradients_used[i].shape)
+            if self.args.watermark:
+                updates_dict[i], m = utils.detect_recover_on_position(masks=masks,whole_grads=gradients_used[i],alpha=alpha,k=k,Watermark=self.args.rqim) if self.args.watermark else (gradients_used[i],None)
+                print(f'client has updates norm {updates_dict[i].norm().item()}')
+            else:
+                updates_dict[i] = gradients_used[i]
         if len(gradients_used) > 0:
             w_glob = FedAvg_0(updates_dict)
         byz_num = (np.array(normal_id)<f).sum()

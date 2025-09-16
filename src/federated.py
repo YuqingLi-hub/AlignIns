@@ -157,15 +157,12 @@ if __name__ == "__main__":
         args.num_byz = 0
         args.exp_name_extra = "clean"
     args.logging = logging
-    args.logging = logging
     if args.super_power:
         args.exp_name_extra = "sp"
     if args.watermark:
         logging.info("Watermarking")
         args.rqim = QIM(args.delta)
-    if args.watermark:
-        logging.info("Watermarking")
-        args.rqim = QIM(args.delta)
+        args.exp_name_extra = args.exp_name_extra + "_wm_a{:.2f}_d{:.2f}_k{:.2f}".format(args.alpha,args.delta,args.k)
     per_data_dict = {
         "rounds": {"fmnist": 50, "cifar10": 100, "cifar100": 100, "tinyimagenet": 50},
         "num_target": {"fmnist": 10, "cifar10": 10, "cifar100": 100, "tinyimagenet": 200,},
@@ -304,8 +301,11 @@ if __name__ == "__main__":
     criterion = nn.CrossEntropyLoss().to(args.device)
     agent_updates_dict = {}
 
+    alpha = args.alpha
+    k = args.k
     best_acc = -1
-    pre_rnd_params = None
+    pre_rnd_updates = None
+    curr_rnd_params = None
     for rnd in range(1, args.rounds + 1):
         logging.info("--------round {} ------------".format(rnd))
         rnd_global_params = parameters_to_vector(
@@ -314,44 +314,32 @@ if __name__ == "__main__":
                 for name in global_model.state_dict()
             ]
         )
+        curr_rnd_params = copy.deepcopy(rnd_global_params)
+        logging.info(f"Server update has nan in update: {torch.isnan(curr_rnd_params).any().item()}, num of nan: {torch.isnan(curr_rnd_params).sum().item()}")
         mask = None
         if args.watermark:
             num_param = len(rnd_global_params)
-            num_spars = 1000
+            num_spars = 200
             idx = torch.randint(0, (num_param - num_spars),size=(1,)).item()
             grads_unwater = copy.deepcopy(rnd_global_params)
             message = args.rqim.random_msg(num_spars)
             mask = [idx,idx+num_spars]
+
+            # alpha is mean
+            alpha = abs(pre_rnd_updates.mean()) if pre_rnd_updates is not None else args.alpha
+            # alpha is 
+
             print(f"Global model params: {rnd_global_params[mask[0]:mask[0]+5]}")
-            grads_water = utils.embedding_watermark_on_position(masks=mask,whole_grads=grads_unwater,Watermark=args.rqim,message=message,alpha=args.alpha,k=args.k)
+            print(f"Embedding watermark with alpha {alpha}')")
+            grads_water = utils.embedding_watermark_on_position(masks=mask,whole_grads=grads_unwater,Watermark=args.rqim,message=message,alpha=alpha,k=k)
             utils.vector_to_model(copy.deepcopy(grads_water), global_model)
             if torch.allclose(parameters_to_vector(global_model.parameters()),grads_water):
                 logging.info("Successfully update Watermarked parameter!")
             else:
                 logging.warning("Update Failure")
             rnd_global_params = grads_water
-        client_alpha = args.alpha
-        client_k = args.k
-        client_delta = args.delta
-        mask = None
-        if args.watermark:
-            num_param = len(rnd_global_params)
-            num_spars = 1000
-            idx = torch.randint(0, (num_param - num_spars),size=(1,)).item()
-            grads_unwater = copy.deepcopy(rnd_global_params)
-            message = args.rqim.random_msg(num_spars)
-            mask = [idx,idx+num_spars]
-            print(f"Global model params: {rnd_global_params[mask[0]:mask[0]+5]}")
-            grads_water = utils.embedding_watermark_on_position(masks=mask,whole_grads=grads_unwater,Watermark=args.rqim,message=message,alpha=args.alpha,k=args.k)
-            utils.vector_to_model(copy.deepcopy(grads_water), global_model)
-            if torch.allclose(parameters_to_vector(global_model.parameters()),grads_water):
-                logging.info("Successfully update Watermarked parameter!")
-            else:
-                logging.warning("Update Failure")
-            rnd_global_params = grads_water
-        client_alpha = args.alpha
-        client_k = args.k
-        client_delta = args.delta
+            logging.info(f"Server Watermarked update has nan in update: {torch.isnan(rnd_global_params).any().item()}, num of nan: {torch.isnan(rnd_global_params).sum().item()}")
+        
         agent_updates_dict = {}
         chosen = np.random.choice(
             args.num_agents,
@@ -364,6 +352,10 @@ if __name__ == "__main__":
         byz_params = []
         benign_params = []
         for agent_id in chosen:
+            client_alpha = abs(agents[agent_id].update.mean()) if hasattr(agents[agent_id],'update') else args.alpha
+            logging.info(f"Client {agent_id} -- Using alpha {client_alpha}, differences = {abs(client_alpha-alpha)}")
+            client_k = args.k
+            client_delta = args.delta
             if agents[agent_id].is_malicious and args.super_power:
                 continue
             global_model = global_model.to(args.device)
@@ -381,6 +373,8 @@ if __name__ == "__main__":
                 update = agents[agent_id].local_train(
                     global_model, criterion, rnd, neurotoxin_mask=neurotoxin_mask,masks=mask,delta=client_delta,alpha=client_alpha, k=client_k
                 )
+                print(f"server: received embedded norm for client {agent_id}", update.norm().item())
+
             
             
             # check = parameters_to_vector(
@@ -395,27 +389,51 @@ if __name__ == "__main__":
             # else:
             #     print(f"after agent {agent_id} model parameter:{check[:10]}")
             #     print(f"agent {agent_id} update:{update[:10]}")
+            # logging.info(f"Client {agent_id} has nan in update: {torch.isnan(update).any().item()}, num of nan: {torch.isnan(update).sum().item()}")
+            if args.watermark:
+                if hasattr(agents[agent_id],'recovered_params'):
+                    logging.info(f"Client {agent_id} received params recover error: {torch.mean(torch.abs(curr_rnd_params - agents[agent_id].recovered_params)).item()}, \nmax error: {torch.max(torch.abs(curr_rnd_params - agents[agent_id].recovered_params)).item()}, \nmin error: {torch.min(torch.abs(curr_rnd_params - agents[agent_id].recovered_params)).item()}")
+                
+                recover_udpates, m = utils.detect_recover_on_position(masks=mask,whole_grads=copy.deepcopy(update),alpha=alpha,k=client_k,Watermark=copy.deepcopy(args.rqim)) if args.watermark else (update,None)
+                if hasattr(agents[agent_id],'update'):
+                    logging.info(f"Client {agent_id} updates recover error: {torch.mean(torch.abs(recover_udpates - agents[agent_id].update)).item()}")
+                    logging.info(f"Client {agent_id} updates norm after recover: {recover_udpates.norm().item()}, true norm {agents[agent_id].update.norm().item()}")
+            norm = update.norm().item()
+            logging.info(f"Client {agent_id} update norm: {norm}")
             
-            agent_updates_dict[agent_id],m = utils.detect_recover_on_position(masks=mask,whole_grads=update,alpha=client_alpha,k=client_k,Watermark=args.rqim) if args.watermark else (update,None)
+            
+            if args.aggr == 'flgmm':
+                agent_updates_dict[agent_id] = update
+            else:
+                agent_updates_dict[agent_id],m = utils.detect_recover_on_position(masks=mask,whole_grads=update,alpha=alpha,k=client_k,Watermark=args.rqim) if args.watermark else (update,None)
+                base = agents[agent_id].update.clone() if hasattr(agents[agent_id],'update') else None
+                print("server: recovered_norm", agent_updates_dict[agent_id].norm().item(),
+                    "reconstruction_err", (agent_updates_dict[agent_id] - base).norm().item())
+                # also check close:
+                print("close?", torch.allclose(agent_updates_dict[agent_id], base, atol=1e-6))
+
+            # agent_updates_dict[agent_id],m = utils.detect_recover_on_position(masks=mask,whole_grads=update,alpha=alpha,k=client_k,Watermark=args.rqim) if args.watermark else (update,None)
             if agents[agent_id].is_malicious and agent_id > args.num_corrupt:
                 byz_params.append(agent_updates_dict[agent_id])
             else: benign_params.append(agent_updates_dict[agent_id])
-            # if mask is not None:
-            #     print(f"after recover model parameter:{agent_updates_dict[agent_id][mask[0]:mask[0]+5]}")
-            # else:
-            #     print(f"after recover model parameter:{agent_updates_dict[agent_id][:10]}")
+           
+
+           
             utils.vector_to_model(copy.deepcopy(rnd_global_params), global_model)
+        # if args.byz and args.aggr != 'flgmm':
         if args.byz:
             byz_params = Attack(byz_params, benign_params)
-            for agent_id in range(args.num_corrupt,args.num_agents-args.byz_num+1):
+            indx = 0
+            for agent_id in range(args.num_corrupt+1,args.num_agents-args.num_byz+1):
                 if agents[agent_id].is_malicious:
-                    agent_updates_dict[agent_id] = byz_params[agent_id]
+                    agent_updates_dict[agent_id] = byz_params[indx]
+                    indx += 1
                     logging.info(f"Byzantine agent {agent_id} attack with {args.byz_attack} method")
         
         # aggregate params obtained by agents and update the global params
         if args.aggr == "flgmm":
             updates_dict = aggregator.aggregate_updates(
-            global_model, agent_updates_dict, epoch=rnd, g0=pre_rnd_params
+            global_model, agent_updates_dict, epoch=rnd, g0=pre_rnd_updates, masks=mask,alpha=alpha, k=client_k
             )
         else:
             updates_dict = aggregator.aggregate_updates(
@@ -427,7 +445,15 @@ if __name__ == "__main__":
                 for name in global_model.state_dict()
             ]
         )
-        pre_rnd_params = copy.deepcopy(check)
+        
+        
+
+        pre_rnd_updates = copy.deepcopy(check) - curr_rnd_params
+        # global_state_before = curr_rnd_params.clone()
+        # print("server: global_before_norm", global_state_before.norm().item())
+        # print("server: aggregated_delta_norm", pre_rnd_updates.norm().item())
+        # print("server: new_global_norm", (global_state_before + pre_rnd_updates).norm().item())
+        logging.info(f"Client {agent_id} update norm: {pre_rnd_updates.norm().item()}")
         # print(f"current model parameter:{check[:10]}")
         # # print(f"updates:{updates_dict[:10]}")
         # print(f"")

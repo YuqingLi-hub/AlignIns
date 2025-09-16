@@ -31,3 +31,5 @@ src/logs
 *.sh
 
 src/outputs
+
+outputs
