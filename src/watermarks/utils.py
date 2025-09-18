@@ -85,3 +85,68 @@ class RQIM:
     # # Evaluation
     # print("Message recovery accuracy:", np.mean(m_hat == m))
     # print("Signal reconstruction error (MSE):", np.mean((s_hat - s) ** 2))
+def vector_to_model(vec, model):
+    # Pointer for slicing the vector for each parameter
+    state_dict = model.state_dict()
+    pointer = 0
+    for name in state_dict:
+        # The length of the parameter
+        num_param = state_dict[name].numel()
+        # Slice the vector, reshape it, and replace the old data of the parameter
+        state_dict[name].data = vec[pointer:pointer + num_param].view_as(state_dict[name]).data
+        # Increment the pointer
+        pointer += num_param
+    model.load_state_dict(state_dict)
+    return state_dict
+import torch
+
+def embedding_watermark_on_position(masks,whole_grads,Watermark,message,alpha,k,model=None):
+    # device = whole_grads.device
+    device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
+    # alpha = args.alpha
+    # k = args.k
+    # delta = args.delta
+    # print('Alpha used in embedding: ', alpha, delta, k)
+
+    # Extract the section to watermark
+    grad_unwater = whole_grads[masks[0]:masks[1]]
+    grad_unwater = grad_unwater.detach().cpu()
+    w_ = Watermark.embed(grad_unwater, m=message, alpha=alpha, k=k).to(device)
+
+    # Update the flat tensor
+    whole_grads[masks[0]:masks[1]].copy_(w_)
+
+    # If model is provided, update the actual model parameters in-place
+    if model is not None:
+        with torch.no_grad():
+            # vector_to_parameters(whole_grads,model.parameters())
+            vector_to_model(whole_grads, model)
+            # start = 0
+            # for p in model.parameters():
+            #     numel = p.numel()
+            #     p.data.copy_(whole_grads[start:start+numel].view_as(p))
+            #     start += numel
+    return whole_grads
+
+def detect_recover_on_position(masks,whole_grads,Watermark,alpha,k,model=None):
+    device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
+    # alpha = args.alpha
+    # k = args.k
+    # delta = args.delta
+    # print('Alpha used in detecting: ',alpha,delta,k)
+    grad_water = copy.deepcopy(whole_grads[masks[0]:masks[1]])
+    grad_water = grad_water.detach().cpu()
+    r_w,mm = Watermark.detect(grad_water,alpha=alpha,k=k)
+
+    reconstructed_grad = r_w.to(device)
+    whole_grads[masks[0]:masks[1]].copy_(reconstructed_grad)
+    if model is not None:
+        with torch.no_grad():
+            # vector_to_parameters(whole_grads,model.parameters())
+            vector_to_model(whole_grads, model)
+            # start = 0
+            # for p in model.parameters():
+            #     numel = p.numel()
+            #     p.data.copy_(whole_grads[start:start+numel].view_as(p))
+            #     start += numel
+    return whole_grads, mm.to(device)

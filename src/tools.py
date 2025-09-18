@@ -354,7 +354,7 @@ def vector_to_model_wo_load(vec, model):
     return state_dict
 
 if __name__ == "__main__":
-    from watermarks.modi_qim import QIM
+    from watermarks.modi_qim_np import QIM
     from options import args_parser
     delta = 0.1
     Watermark = QIM(delta=delta)

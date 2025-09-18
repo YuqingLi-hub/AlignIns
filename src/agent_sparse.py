@@ -8,7 +8,7 @@ import torch.nn as nn
 import numpy as np
 import logging
 import time
-from watermarks.modi_qim import QIM
+from watermarks.modi_qim_np import QIM
 
 class Agent():
     def __init__(self, id, args, train_dataset=None, data_idxs=None, mask=None, backdoor_train_dataset=None):

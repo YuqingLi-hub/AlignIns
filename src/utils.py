@@ -229,11 +229,15 @@ def get_datasets(data):
     data_dir = './data'
 
     if data == 'fmnist':
-        transform = transforms.Compose([transforms.ToTensor(), transforms.Normalize(mean=[0.5], std=[0.5])])
+        transform = transforms.Compose([transforms.ToTensor(), 
+                                        transforms.Lambda(lambda x: x.to(torch.float64)),
+                                        transforms.Normalize(mean=[0.5], std=[0.5])])
         train_dataset = datasets.FashionMNIST(data_dir, train=True, download=True, transform=transform)
         test_dataset = datasets.FashionMNIST(data_dir, train=False, download=True, transform=transform)
     if data == 'mnist':
-        transform = transforms.Compose([transforms.ToTensor(), transforms.Normalize(mean=[0.5], std=[0.5])])
+        transform = transforms.Compose([transforms.ToTensor(), 
+                                        transforms.Lambda(lambda x: x.to(torch.float64)),
+                                        transforms.Normalize(mean=[0.5], std=[0.5])])
         train_dataset = datasets.MNIST(data_dir, train=True, download=True, transform=transform)
         test_dataset = datasets.MNIST(data_dir, train=False, download=True, transform=transform)
     elif data == 'fedemnist':
@@ -247,10 +251,12 @@ def get_datasets(data):
             transforms.RandomCrop(32, padding=4),
             transforms.RandomHorizontalFlip(),
             transforms.ToTensor(),
+            transforms.Lambda(lambda x: x.to(torch.float64)),
             transforms.Normalize(mean=(0.4914, 0.4822, 0.4465), std=(0.2023, 0.1994, 0.2010)),
         ])
         transform_test = transforms.Compose([
             transforms.ToTensor(),
+            transforms.Lambda(lambda x: x.to(torch.float64)),
             transforms.Normalize(mean=(0.4914, 0.4822, 0.4465), std=(0.2023, 0.1994, 0.2010)),
         ])
         train_dataset = datasets.CIFAR10(data_dir, train=True, download=True, transform=transform_train)
@@ -262,9 +268,11 @@ def get_datasets(data):
                                         transforms.RandomCrop(32, padding=4),
                                         transforms.RandomHorizontalFlip(),
                                         transforms.ToTensor(),
+                                         transforms.Lambda(lambda x: x.to(torch.float64)),
                                         transforms.Normalize(mean=[0.5071, 0.4867, 0.4408],
                                                              std=[0.2675, 0.2565, 0.2761])])
         valid_transform = transforms.Compose([transforms.ToTensor(),
+                                            transforms.Lambda(lambda x: x.to(torch.float64)),
                                               transforms.Normalize(mean=[0.5071, 0.4867, 0.4408],
                                                                    std=[0.2675, 0.2565, 0.2761])])
         train_dataset = datasets.CIFAR100(data_dir,
@@ -276,10 +284,12 @@ def get_datasets(data):
     elif data == "tinyimagenet":
         _data_transforms = {
             'train': transforms.Compose([
-                transforms.ToTensor()
+                transforms.ToTensor(),
+                transforms.Lambda(lambda x: x.to(torch.float64))
             ]),
             'test': transforms.Compose([
-                transforms.ToTensor()
+                transforms.ToTensor(),
+                 transforms.Lambda(lambda x: x.to(torch.float64))
             ]),
         }
         _data_dir = './data/tiny-imagenet-200/'
@@ -860,12 +870,21 @@ def embedding_watermark_on_position(masks,whole_grads,Watermark,message,alpha,k,
     # k = args.k
     # delta = args.delta
     # print('Alpha used in embedding: ', alpha, delta, k)
-
+    print(whole_grads.dtype, type(whole_grads))
     # Extract the section to watermark
-    grad_unwater = whole_grads[masks[0]:masks[1]]
-    grad_unwater = grad_unwater.detach().cpu()
-    w_ = Watermark.embed(grad_unwater, m=message, alpha=alpha, k=k).to(device)
-
+    grad_unwater = copy.deepcopy(whole_grads[masks[0]:masks[1]])
+    grad_unwater = grad_unwater.cpu().detach().numpy()
+    # print('type alpha:', type(alpha))
+    # print('type k:', type(k))
+    print(grad_unwater.dtype, type(grad_unwater))
+    if type(alpha) != float:
+        # print('type alpha:', type(alpha))
+        alpha = alpha.cpu().numpy()
+    if type(k) != float and type(k) != int:
+        print('type k:', type(k))
+        # k = k.cpu().numpy()
+    w_ = Watermark.embed(grad_unwater, m=message, alpha=alpha, k=k)
+    w_ = torch.tensor(w_,dtype=whole_grads.dtype).to(device)
     # Update the flat tensor
     whole_grads[masks[0]:masks[1]].copy_(w_)
 
@@ -887,10 +906,17 @@ def detect_recover_on_position(masks,whole_grads,Watermark,alpha,k,model=None):
     # k = args.k
     # delta = args.delta
     # print('Alpha used in detecting: ',alpha,delta,k)
+    print(whole_grads.dtype, type(whole_grads))
     grad_water = copy.deepcopy(whole_grads[masks[0]:masks[1]])
-    grad_water = grad_water.detach().cpu()
+    grad_water = grad_water.cpu().detach().numpy()
+    print(grad_water.dtype, type(grad_water))
+    if type(alpha) != float:
+        alpha = alpha.cpu().numpy()
+    if type(k) != float and type(k) != int:
+        k = k.cpu().numpy()
     r_w,mm = Watermark.detect(grad_water,alpha=alpha,k=k)
-
+    r_w = torch.tensor(r_w,dtype=whole_grads.dtype)
+    # mm = torch.tensor(mm,dtype=torch.int)
     reconstructed_grad = r_w.to(device)
     whole_grads[masks[0]:masks[1]].copy_(reconstructed_grad)
     if model is not None:
@@ -902,7 +928,7 @@ def detect_recover_on_position(masks,whole_grads,Watermark,alpha,k,model=None):
             #     numel = p.numel()
             #     p.data.copy_(whole_grads[start:start+numel].view_as(p))
             #     start += numel
-    return whole_grads, mm.to(device)
+    return whole_grads, mm
 
 
 def get_mean_updates(updates,avg_update=None):

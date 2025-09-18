@@ -4,10 +4,8 @@ import time
 import torch
 import utils
 from torch.nn.utils import parameters_to_vector,vector_to_parameters
-from torch.nn.utils import parameters_to_vector,vector_to_parameters
 from torch.utils.data import DataLoader
-from watermarks.modi_qim import QIM
-from watermarks.modi_qim import QIM
+from watermarks.modi_qim_np import QIM
 
 class Agent():
     def __init__(self, id, args, train_dataset=None, data_idxs=None, mask=None, backdoor_train_dataset=None):

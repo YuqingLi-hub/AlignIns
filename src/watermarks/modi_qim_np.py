@@ -6,7 +6,6 @@ import sys
 from collections import defaultdict
 # from watermarks.tools import henon_map, plot_any
 import torch
-import math
 class QIM:
     def __init__(self, delta):
         # delta is the step size of quantization
@@ -15,18 +14,43 @@ class QIM:
         self.fAlpha = ['quasi_periodic','CTBCS']  # alpha function type, can be 'linear', 'logistic', or 'cosine' 'CTBCS'
         # self.fAlpha = ['quasi_periodic','henon']  # alpha function type, can be 'linear', 'logistic', or 'cosine' 'CTBCS'
         self.r = 3.9
-        self.device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
-    def embed(self, x:torch.Tensor, m:torch.Tensor,alpha=0.51,k=0):
+    def embed(self, x, m,alpha=0.51,k=0):
         """
         x is a vector of values to be quantized individually
         m is a binary vector of bits to be embeded
         returns: a quantized vector y
         """
-        self.device = x.device
-        scale = self.alpha_func(alpha=alpha,n=len(x))
+        # make x type float
+        if not isinstance(x, np.ndarray):
+            x = x.detach().cpu().numpy()
+        x = x.astype(float)
+        # state alpha
+        if self.fAlpha[1] == 'henon':
+            alpha = quanti(alpha,self.delta/10)
+            alpha = quasi_periodic(alpha)
+            k = quanti(k,self.delta/10)
+            k = quasi_periodic(k)*2/5-0.2
+            # print(alpha,k)
+            # henon_points = np.array(henon_map(alpha,k,n=len(x)))
+            # scale,k = henon_points[:,0]/6+0.75,henon_points[:,1]
+            # print(scale.max(),scale.min())
+        else:
+            scale = self.alpha_func(alpha=alpha,n=len(x))
+
+        # print(alpha)
+        # print(-np.exp(-(alpha-0.5)**2 / 10**2)*0.5+1)
+        # print(sigmoid(alpha))
+        # print(np.where(scale<=0.5),np.where(scale>=1))
+        # print(scale[np.where(scale<=0.5)][:10])
+        # print(scale)
         d = self.delta
-        dm = (m*d/2.).to(self.device)
+        # get d_0 and d_1 according to m
+        # dm = (-1)**(m+1) * d/2.
+        dm = m*d/2.
         q_mk = quanti((x-dm-k), d) + (dm + k)
+        # dis = np.round((x-dm-k) / d) - (x-dm-k)/d
+        # print('Theory Embedding distortion: $a*delta*(frac((s-d_m-k)/delta))', alpha*d*dis)
+        # self.q_mk = q_mk
         self.x = x
         y = q_mk * scale + x * (1 - scale)
         return y
@@ -42,27 +66,44 @@ class QIM:
             x = quasi_periodic(alpha)
         else:
             x = bump(alpha)
-
+        # x = np.exp(-(alpha-0.5)**2 / 10**2)
+        # print(x)
+        # print(x)
+        # count_out_range = 0
         if self.fAlpha[1] == 'logistic':
             points = []
             for _ in range(n):
+                # if x<=0.5:
+                #     x = 0.5+x
+                #     count_out_range+=1
+                # elif x>=1:
+                #     x = 1-eps
+                #     count_out_range+=1
                 points.append(x)
                 x = logistic_map(x,r)
             # return np.clip(points, 0.5+eps, 1-eps)  # Ensure alpha is within [0, 1]
-            points = torch.stack(points)*0.5+0.5
-            return points.to(self.device)
+            points = np.array(points)*0.5+0.5
+            # print(count_out_range)
+            # print(np.where(points>=1), np.where(points<=0.5))
+            # print(np.min(points), np.max(points))
+            return np.array(points)
         elif self.fAlpha[1] == 'CTBCS':
             points = []
             for _ in range(n):
                 points.append(x)
                 x = CTBCS(x,beta=0.5)
-            points = torch.stack(points) * 0.24 + 0.75
-            # points = torch.clamp(points, max=1.0 - 1e-6)
-            return points.to(self.device)
+            # return np.clip(points, 0.5+eps, 1-eps)  # Ensure alpha is within [0, 1]
+            # print(np.min(points), np.max(points))
+            points = np.array(points)*0.24+0.75
+            # print(count_out_range)
+            # print(np.where(points>=1), np.where(points<=0.5))
+            # print(np.min(points), np.max(points))
+            print(np.array(points).dtype)
+            return np.array(points)
         
-        # elif self.fAlpha[1] == 'bump':
+        elif self.fAlpha[1] == 'bump':
             
-        #     return np.exp(-(alpha-0.5)**2 / 3**2)
+            return np.exp(-(alpha-0.5)**2 / 3**2)
         
         return alpha
     def detect(self, z,alpha=1,k=0,scale_delta=1):
@@ -70,86 +111,74 @@ class QIM:
         z is the received vector, potentially modified
         returns: a detected vector z_detected and a detected message m_detected
         """
-        self.device = z.device
-        d = self.delta
-        scale = self.alpha_func(alpha=alpha,n=len(z))
+        d = self.delta *scale_delta
+        if not isinstance(z, np.ndarray):
+            z = z.detach().cpu().numpy()
+        if self.fAlpha[1] == 'henon':
+            alpha = quanti(alpha,self.delta/10)
+            alpha = quasi_periodic(alpha)
+            k = quanti(k,self.delta/10)
+            k = quasi_periodic(k)*2/5-0.2
+            # print(alpha,k)
+            # henon_points = np.array(henon_map(alpha,k,n=len(z)))
+            # scale,k = henon_points[:,0]/6+0.75,henon_points[:,1]
+            # print(len(np.where(scale<=0.5)[0]),len(np.where(scale>=1)[0]))
+            # print(k.min(),k.max())
+            # print(len(np.where(k<=-1)[0]),len(np.where(scale>=1)[0]))
+            # print(scale.max(),scale.min())
+            # print()
+        else:
+            scale = self.alpha_func(alpha=alpha,n=len(z))
         M_cls = 2.
         shape = z.shape
         
         # print(scale)
         z = z.flatten()
-        # print(z.isnan().any())
-        # z = z.astype(float)
-        m_detected = torch.zeros_like(z, dtype=float)
-        dm_hat = (quanti((z-k),d/M_cls)+k).to(self.device)
-        # print(dm_hat.isnan().any())
+        z = z.astype(float)
+        m_detected = np.zeros_like(z, dtype=float)
+        dm_hat = (quanti((z-k),d/M_cls)+k)
         # self.dm_hat = dm_hat
         # self.m_c = self.selective_round(dm_hat/d)%1
         # self.y_dm_hat = abs(z-self.q_mk)
-        # scale = torch.clamp(scale, max=1-1e-8) 
         z_hat = (z-scale * dm_hat)/ (1-scale)
-        # print(z_hat.isnan().any())
         d_values = [0,d/2.]
-        rough_m = torch.round((self.selective_round((dm_hat-k)/d)%1)*2)
+        rough_m = np.round((self.selective_round((dm_hat-k)/d)%1)*2)
         m_detected = rough_m
-        m_detected = torch.reshape(m_detected,shape)
-        # print(m_detected.isnan().any())
-        return z_hat, m_detected.int().to(self.device)
+        m_detected = m_detected.reshape(shape)
+        return z_hat, m_detected.astype(int)
     
-    def selective_round(self,x:torch.tensor, threshold=0.99):
-        # frac = x%1
-        # l = frac.shape
-        # if torch.allclose(frac,torch.full(l, 0.5).to(self.device)):
-        #     frac = 0.5
-        # if torch.allclose(frac,torch.zeros(l).to(self.device)):
-        #     frac = 0
-        # return torch.floor(x) + torch.where(frac >= threshold, torch.tensor(1.0).to(self.device), frac)
-        frac = x % 1
-    
-        # Ensure the threshold is also a tensor for broadcasting
-        threshold_tensor = torch.tensor(threshold, dtype=x.dtype, device=x.device)
-        
-        # The condition will be a boolean tensor
-        condition = frac >= threshold_tensor
-        
-        # The true value and false value must be tensors of the same type and device
-        true_val = torch.tensor(1.0, dtype=x.dtype, device=x.device)
-        false_val = frac
-        
-        # Now, all arguments to torch.where are of compatible types and on the same device
-        result_frac = torch.where(condition, true_val, false_val)
-        
-        return torch.floor(x) + result_frac
-    
+    def selective_round(self,x, threshold=0.99):
+        frac = x%1
+        if np.allclose(frac,0.5):
+            frac = 0.5
+        if np.allclose(frac,0):
+            frac = 0
+        return np.floor(x) + np.where((x % 1) >= threshold, 1, (frac))
     def random_msg(self, l):
         """
         returns: a random binary sequence of length l
         """
-        return torch.bernoulli(torch.full((l,), 0.5)).int().to(self.device)
+        return np.random.choice((0, 1), l)
 
 def quanti(x, delta):
     """
     quantizes the input x with step size delta
     """
-    if not isinstance(x,torch.Tensor):
-        x = torch.tensor(x,dtype=torch.float32)
     # the delta*floor[x/delta]
     # so floor will increase the distortion
-    return (torch.round(x / delta) * delta)
+    return np.round(x / delta) * delta
 def bump(alpha):
-    return torch.exp(-(alpha-0.5)**2 / 10**2)
+    return np.exp(-(alpha-0.5)**2 / 10**2)
 def sigmoid(alpha):
-    return 1/(1+torch.exp(-alpha))
+    return 1/(1+np.exp(-alpha))
 def quasi_periodic(t):
-    if not isinstance(t,torch.Tensor):
-        t = torch.tensor(t)
-    return (((torch.sin(t) + torch.sin(math.sqrt(2) * t))+2)/4)**1.1
-def logistic_map(x, r=3.6):
+    return (((np.sin(t) + np.sin(np.sqrt(2) * t))+2)/4)**1.1
+def logistic_map(x, r=3.9):
     return r * x * (1 - x)
 def sine_map(x,r=3.9):
-    return r * torch.sin(torch.pi * x)
+    return r * np.sin(np.pi * x)
 def CTBCS(t,f1=logistic_map,f2=sine_map,beta=0.5):
-    return torch.cos(torch.pi*f1(t)+f2(t,r=1-3.6/4)-beta)
+    return np.cos(np.pi*f1(t)+f2(t,r=1-3.9/4)-beta)
 
 
 
@@ -160,17 +189,27 @@ def test_qim_1(delta=1,embedding_alpha=0.99,k=0,plot=False,test=False):
     """
     tests the embed and detect methods of class QIM
     """
-    import utils
     np.random.seed(42)
-    torch.manual_seed(42)
     l = 10000 # binary message length
     # delta = 1.0 # quantization step (use float for consistency)
     qim = QIM(delta)
 
     # x = np.random.uniform(-500, 500, l).astype(float) # host sample
     # x = np.random.randn(l)
-    x = torch.randn(l)
-    # x = x.cpu().numpy()
+    # x_torch = torch.zeros(l,dtype=torch.float32)
+    points = []
+    x = 0.7
+    for _ in range(l):
+        points.append(x)
+        x = CTBCS(x,beta=0.5)
+    # return np.clip(points, 0.5+eps, 1-eps)  # Ensure alpha is within [0, 1]
+    # print(np.min(points), np.max(points))
+    x_torch = torch.tensor(points)*1e-6
+    # x_torch = torch.randn(l)*1e-5
+    print(x_torch.dtype, type(x_torch))
+    print(max(x_torch),min(x_torch))
+    x = x_torch.cpu().numpy()
+    print(x.dtype, type(x))
     # x = np.linspace(-5, 5, l).astype(float)  # host sample
     print('Original x (first 5):', x[:5])
 
@@ -239,22 +278,21 @@ def test_qim_1(delta=1,embedding_alpha=0.99,k=0,plot=False,test=False):
     y_watermarked = qim.embed(x, msg, alpha=embedding_alpha, k=true_k)
     print('Watermarked y (first 5):', y_watermarked[:5])
     print('Distortion: ',y_watermarked[:5]-x[:5])
-    initial_distortion = torch.mean(torch.abs(x - y_watermarked))
+    initial_distortion = np.mean(np.abs(x - y_watermarked))
     good_z, good_msg = qim.detect(y_watermarked, alpha=embedding_alpha, k=true_k, scale_delta=1)
     print(f"Initial Embedding Distortion (Abs Diff): {initial_distortion:.6f}")
-    print(f"Detected Message Accuracy: {torch.mean((msg == good_msg).float()):.4f}")
-    print(f"Recovered?", torch.allclose(good_z,x))
+    print(f"Detected Message Accuracy: {np.mean(msg == good_msg):.4f}")
+    print(f"Recovered?", np.allclose(good_z,x))
+    print(x_torch.dtype)
+    print(f"Recover torch?",torch.allclose(torch.tensor(good_z,dtype=x_torch.dtype).to(x_torch),x_torch))
     # print(qim.m_c[msg != good_msg])
     # # print((1-qim.m_c)[msg != good_msg])
     # # # print(qim.dm_hat[msg != good_msg]%1)
     # # print()
     # print(msg[msg != good_msg])
     # print(good_msg[msg != good_msg])
-    # print(good_z.isnan().any(),x.isnan().any(),y_watermarked.isnan().any())
-    print(f'Recovery error when all correct: {torch.mean(torch.abs(good_z - x)):.6f}')
-    print(f"{len(torch.abs(good_z - x)[torch.abs(good_z - x)>1e-7])} updates have error larger than 1e-7")
-    print(f"{len(torch.abs(good_z - x)[torch.abs(good_z - x)>1e-10])} updates have error larger than 1e-10")
-    print(f"{len(torch.abs(good_z - x)[torch.abs(good_z - x)>1e-12])} updates have error larger than 1e-12")
+    print(f'Recovery error when all correct: {np.mean(np.abs(good_z - x)):.6f}')
+
 
     # --- Step 2: Loop through different 'a' values for DETECTION/RESTORATION ---
     # We are testing how well detection/restoration works if we GUESS 'a'
@@ -312,13 +350,13 @@ def test_qim_1(delta=1,embedding_alpha=0.99,k=0,plot=False,test=False):
             
         #     # Calculate errors
 
-            current_recovery_error = torch.mean(torch.abs(z_detected - x))
+            current_recovery_error = np.mean(np.abs(z_detected - x))
         #     # thery = np.mean(np.abs(qim.y_dm_hat*((a_detect-embedding_alpha)/((1-embedding_alpha)*(1-a_detect)))))
 
         #     # print(f"  Detected error (first 5): {current_recovery_error}")
         #     # print(f"  Theory error (first 5): {thery}")
         #     # print(np.isclose(current_recovery_error, thery, atol=1e-7, rtol=1e-7))
-            current_message_accuracy = torch.mean((msg == good_msg).float()) # Already normalized
+            current_message_accuracy = np.mean(msg == msg_detected) # Already normalized
         #     # print(f"  Detected message accuracy: {current_message_accuracy:.4f}")
             recovery_errors.append(current_recovery_error)
             message_accuracies.append(current_message_accuracy)
@@ -494,7 +532,7 @@ def plot_rec_mess(recovery_errors, message_accuracies, alphas_to_test_detection,
     plt.title(f'Recovery Error vs. Detection Alpha Delta={delta} ,alpha={embedding_alpha}')
     plt.xlabel('Detection Alpha ($a$)')
     plt.ylabel('Mean Absolute Recovery Error ($|\\hat{s} - s|$ mean)')
-    # plt.ylim(0, 1000)  # Optional: limit y for better visualization
+    plt.ylim(0, 1000)  # Optional: limit y for better visualization
     plt.grid(True)
     plt.legend()
     plt.tight_layout()

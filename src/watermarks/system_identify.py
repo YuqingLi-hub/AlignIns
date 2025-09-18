@@ -1,4 +1,4 @@
-from modi_qim import QIM, quasi_periodic, quanti, logistic_map,CTBCS
+from modi_qim_np import QIM, quasi_periodic, quanti, logistic_map,CTBCS
 from tools import henon_map
 import numpy as np
 from sysidentpy.model_structure_selection import FROLS

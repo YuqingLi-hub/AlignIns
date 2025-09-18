@@ -15,7 +15,7 @@ import logging
 import argparse
 import os
 import warnings
-from watermarks.modi_qim import QIM
+from watermarks.modi_qim_np import QIM
 from attacks import attack
 warnings.filterwarnings("ignore")
 
@@ -235,7 +235,7 @@ if __name__ == "__main__":
     )
 
     # initialize a model, and the agents
-    global_model = models.get_model(args.data, args).to(args.device)
+    global_model = models.get_model(args.data, args).to(args.device).double()
 
     global_mask = {}
     neurotoxin_mask = {}
@@ -338,7 +338,7 @@ if __name__ == "__main__":
             else:
                 logging.warning("Update Failure")
             rnd_global_params = grads_water
-            logging.info(f"Server Watermarked update has nan in update: {torch.isnan(rnd_global_params).any().item()}, num of nan: {torch.isnan(rnd_global_params).sum().item()}")
+            # logging.info(f"Server Watermarked update has nan in update: {torch.isnan(rnd_global_params).any().item()}, num of nan: {torch.isnan(rnd_global_params).sum().item()}")
         
         agent_updates_dict = {}
         chosen = np.random.choice(
@@ -353,7 +353,7 @@ if __name__ == "__main__":
         benign_params = []
         for agent_id in chosen:
             client_alpha = abs(agents[agent_id].update.mean()) if hasattr(agents[agent_id],'update') else args.alpha
-            logging.info(f"Client {agent_id} -- Using alpha {client_alpha}, differences = {abs(client_alpha-alpha)}")
+            # logging.info(f"Client {agent_id} -- Using alpha {client_alpha}, differences = {abs(client_alpha-alpha)}")
             client_k = args.k
             client_delta = args.delta
             if agents[agent_id].is_malicious and args.super_power:
@@ -392,12 +392,19 @@ if __name__ == "__main__":
             # logging.info(f"Client {agent_id} has nan in update: {torch.isnan(update).any().item()}, num of nan: {torch.isnan(update).sum().item()}")
             if args.watermark:
                 if hasattr(agents[agent_id],'recovered_params'):
-                    logging.info(f"Client {agent_id} received params recover error: {torch.mean(torch.abs(curr_rnd_params - agents[agent_id].recovered_params)).item()}, \nmax error: {torch.max(torch.abs(curr_rnd_params - agents[agent_id].recovered_params)).item()}, \nmin error: {torch.min(torch.abs(curr_rnd_params - agents[agent_id].recovered_params)).item()}")
-                
+                    recover_param_error = torch.abs(curr_rnd_params - agents[agent_id].recovered_params)
+                    logging.info(f"Client {agent_id} received params recover error: {torch.mean(torch.abs(curr_rnd_params - agents[agent_id].recovered_params)).item()}, \nmax error: {torch.max(torch.abs(curr_rnd_params - agents[agent_id].recovered_params)).item()}, min error: {torch.min(torch.abs(curr_rnd_params - agents[agent_id].recovered_params)).item()}")
+                    logging.info(f"{len(recover_param_error[recover_param_error>1e-7])} parameters have error larger than 1e-7")
+                    logging.info(f"{len(recover_param_error[recover_param_error>1e-10])} parameters have error larger than 1e-10")
+                    logging.info(f"{len(recover_param_error[recover_param_error>1e-12])} parameters have error larger than 1e-12")
                 recover_udpates, m = utils.detect_recover_on_position(masks=mask,whole_grads=copy.deepcopy(update),alpha=alpha,k=client_k,Watermark=copy.deepcopy(args.rqim)) if args.watermark else (update,None)
                 if hasattr(agents[agent_id],'update'):
-                    logging.info(f"Client {agent_id} updates recover error: {torch.mean(torch.abs(recover_udpates - agents[agent_id].update)).item()}")
+                    recover_update_error = torch.abs(recover_udpates - agents[agent_id].update)
+                    logging.info(f"Client {agent_id} updates recover error: {torch.mean(torch.abs(recover_udpates - agents[agent_id].update)).item()}, \nmax error: {torch.max(torch.abs(recover_udpates - agents[agent_id].update)).item()}, min error: {torch.min(torch.abs(recover_udpates - agents[agent_id].update)).item()}")
                     logging.info(f"Client {agent_id} updates norm after recover: {recover_udpates.norm().item()}, true norm {agents[agent_id].update.norm().item()}")
+                    logging.info(f"{len(recover_update_error[recover_update_error>1e-7])} updates have error larger than 1e-7")
+                    logging.info(f"{len(recover_update_error[recover_update_error>1e-10])} updates have error larger than 1e-10")
+                    logging.info(f"{len(recover_update_error[recover_update_error>1e-12])} updates have error larger than 1e-12")
             norm = update.norm().item()
             logging.info(f"Client {agent_id} update norm: {norm}")
             
